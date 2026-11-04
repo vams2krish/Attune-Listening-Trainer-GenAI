@@ -64,7 +64,7 @@ export function providerError(status: number, name: string) {
   if (status === 401 || status === 403)
     return `${name} could not authorize this request. Check the server API key and its permissions.`;
   if (status === 402)
-    return `${name} has no available credits. Add credits in your provider account to continue.`;
+    return `${name} does not have enough available credits for this request. Add credits or try a shorter session.`;
   if (status === 429)
     return `${name} reached a rate or credit limit. Please try again later.`;
   return `${name} could not complete the request (${status}). Please try again.`;

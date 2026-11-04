@@ -82,7 +82,13 @@ export async function POST(request: Request) {
           },
         },
         "duration_conversation",
-        Math.min(30000, Math.max(6000, words * (input.lang === "en" ? 4 : 10))),
+        Math.min(
+          24000,
+          Math.max(
+            2200,
+            Math.ceil(targetWords * (input.lang === "en" ? 2.8 : 9)) + 1600,
+          ),
+        ),
       );
     const segmentWords = Math.min(words, input.lang === "en" ? 675 : 575);
     const countWords = (v: { turns?: { text?: string }[] }) =>
