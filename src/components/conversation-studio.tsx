@@ -1,8 +1,16 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, LoaderCircle, Save, Sparkles } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import type { Question } from "../lib/questions";
+import {
+  parseDialogue,
+  SESSION_MINUTES,
+  formatDuration,
+  type SessionMinutes,
+} from "../lib/session-content";
+import { QuestionPreview } from "./question-preview";
 export type Draft = {
   id: string;
   title: string;
@@ -10,6 +18,10 @@ export type Draft = {
   lang: "en" | "hi" | "te";
   speakers: number;
   createdAt: string;
+  minutes?: SessionMinutes;
+  questions?: Question[];
+  scenario?: string;
+  cast?: { name: string; role: string }[];
 };
 export function loadDrafts(): Draft[] {
   try {
@@ -36,7 +48,17 @@ export function saveDraft(draft: Omit<Draft, "id" | "createdAt">) {
   const existing = drafts.find(
     (d) => d.dialogue === draft.dialogue && d.lang === draft.lang,
   );
-  if (existing) return;
+  if (existing) {
+    localStorage.setItem(
+      "attune-drafts",
+      JSON.stringify(
+        drafts.map((d) =>
+          d.id === existing.id ? { ...existing, ...draft } : d,
+        ),
+      ),
+    );
+    return;
+  }
   localStorage.setItem(
     "attune-drafts",
     JSON.stringify(
@@ -67,14 +89,19 @@ export function ConversationStudio({
   ready: boolean;
 }) {
   const [prompt, setPrompt] = useState(""),
-    [turns, setTurns] = useState(6),
+    [minutes, setMinutes] = useState<SessionMinutes>(2),
     [busy, setBusy] = useState(false),
     [title, setTitle] = useState(""),
     [dialogue, setDialogue] = useState(""),
     [error, setError] = useState(""),
     [saved, setSaved] = useState(false),
     [resultLang, setResultLang] = useState(lang),
-    [resultSpeakers, setResultSpeakers] = useState(speakers);
+    [resultSpeakers, setResultSpeakers] = useState(speakers),
+    [resultMinutes, setResultMinutes] = useState<SessionMinutes>(2),
+    [questions, setQuestions] = useState<Question[]>([]),
+    [scene, setScene] = useState(""),
+    [cast, setCast] = useState<{ name: string; role: string }[]>([]),
+    [estimate, setEstimate] = useState(0);
   async function generate() {
     setBusy(true);
     setError("");
@@ -83,10 +110,11 @@ export function ConversationStudio({
       const r = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, lang, speakers, turns }),
+        body: JSON.stringify({ prompt, lang, speakers, minutes }),
       });
       const d = (await r.json()) as Omit<Draft, "id" | "createdAt"> & {
         error?: string;
+        estimatedSeconds?: number;
       };
       if (!r.ok)
         throw Error(d.error || "Could not generate your conversation.");
@@ -94,12 +122,64 @@ export function ConversationStudio({
       setDialogue(d.dialogue);
       setResultLang(d.lang);
       setResultSpeakers(d.speakers);
+      setResultMinutes(d.minutes || minutes);
+      setQuestions(d.questions || []);
+      setScene(d.scenario || "");
+      setCast(d.cast || []);
+      setEstimate(d.estimatedSeconds || 0);
+      try {
+        saveDraft(d);
+        setSaved(true);
+      } catch {
+        setError(
+          "Conversation generated, but browser storage is unavailable. Keep this page open to use it.",
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
       setBusy(false);
     }
   }
+  useEffect(() => {
+    if (!dialogue.trim()) return;
+    const timer = window.setTimeout(() => {
+      try {
+        if (
+          new Set(parseDialogue(dialogue).map((l) => l[0])).size !==
+          resultSpeakers
+        )
+          return;
+      } catch {
+        return;
+      }
+      try {
+        saveDraft({
+          title: title.trim() || "Generated conversation",
+          dialogue,
+          lang: resultLang,
+          speakers: resultSpeakers,
+          minutes: resultMinutes,
+          questions,
+          scenario: scene,
+          cast,
+        });
+        setSaved(true);
+      } catch {
+        setError("Automatic saving is unavailable. Check browser storage.");
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [
+    title,
+    dialogue,
+    resultLang,
+    resultSpeakers,
+    resultMinutes,
+    questions,
+    scene,
+    cast,
+  ]);
   function save() {
     try {
       saveDraft({
@@ -107,6 +187,10 @@ export function ConversationStudio({
         dialogue,
         lang: resultLang,
         speakers: resultSpeakers,
+        minutes: resultMinutes,
+        questions,
+        scenario: scene,
+        cast,
       });
       setSaved(true);
       setError("");
@@ -167,17 +251,19 @@ export function ConversationStudio({
         </div>
         <div>
           <label className="field" htmlFor="generate-length">
-            Length
+            Session duration
           </label>
           <select
             disabled={busy}
             id="generate-length"
-            value={turns}
-            onChange={(e) => setTurns(+e.target.value)}
+            value={minutes}
+            onChange={(e) => setMinutes(+e.target.value as SessionMinutes)}
           >
-            <option value={6}>6 turns</option>
-            <option value={10}>10 turns</option>
-            <option value={14}>14 turns</option>
+            {SESSION_MINUTES.map((n) => (
+              <option key={n} value={n}>
+                {n} minutes
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -188,7 +274,7 @@ export function ConversationStudio({
       >
         {busy ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
         {busy
-          ? "Generating…"
+          ? "Building conversation and test…"
           : dialogue
             ? "Generate another"
             : "Generate conversation"}
@@ -206,9 +292,32 @@ export function ConversationStudio({
           {error}
         </p>
       )}
+      <p className="text-[11px] text-muted-foreground mt-3 leading-5">
+        Duration is a target at 1.0× speed. Natural voices and languages vary;
+        actual audio time is shown after preparation. Longer sessions use more
+        provider credits.
+      </p>
       {dialogue && (
         <div className="border-t border-border mt-6 pt-6">
-          <h3 className="text-sm font-medium mb-4">Review your conversation</h3>
+          <h3 className="text-sm font-medium mb-2">Review your conversation</h3>
+          <p className="text-[11px] text-muted-foreground mb-4">
+            {resultMinutes}-minute target · Script estimate{" "}
+            {formatDuration(estimate)} at 1.0× · {questions.length} questions
+          </p>
+          {scene && (
+            <div className="bg-zinc-50 border border-border rounded-lg p-4 mb-5 text-xs leading-6">
+              <strong>Scenario</strong>
+              <p>{scene}</p>
+              {cast.map((c) => (
+                <p key={c.name}>
+                  <strong>{c.name}</strong> — {c.role}
+                </p>
+              ))}
+              <p className="text-muted-foreground mt-2">
+                Names are introduced in the spoken conversation.
+              </p>
+            </div>
+          )}
           <label htmlFor="generated-title" className="field">
             Title
           </label>
@@ -231,13 +340,22 @@ export function ConversationStudio({
             value={dialogue}
             onChange={(e) => {
               setDialogue(e.target.value);
+              setQuestions([]);
               setSaved(false);
             }}
           />
+          {questions.length > 0 ? (
+            <QuestionPreview questions={questions} />
+          ) : (
+            <p className="text-xs text-muted-foreground mt-3">
+              Content questions will be rebuilt when you prepare this edited
+              conversation.
+            </p>
+          )}
           <div className="flex gap-2 flex-wrap mt-4">
             <Button variant="outline" onClick={save}>
               <Save />
-              {saved ? "Saved in Library" : "Save for later"}
+              {saved ? "Automatically saved" : "Save now"}
             </Button>
             <Button
               onClick={() =>
@@ -246,6 +364,10 @@ export function ConversationStudio({
                   dialogue,
                   lang: resultLang,
                   speakers: resultSpeakers,
+                  minutes: resultMinutes,
+                  questions,
+                  scenario: scene,
+                  cast,
                 })
               }
             >
@@ -254,7 +376,7 @@ export function ConversationStudio({
             </Button>
           </div>
           <p className="text-[10px] text-muted-foreground mt-3">
-            Saved conversations are kept on this device under Library.
+            Conversations save automatically to Library on this device.
           </p>
         </div>
       )}

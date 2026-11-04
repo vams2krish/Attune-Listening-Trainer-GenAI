@@ -46,14 +46,14 @@ export async function reserve(request: Request, kind: string) {
   if (active.size > 1000) {
     for (const [k, v] of active) if (v < now) active.delete(k);
   }
-  active.set(key, now + 100000);
+  active.set(key, now + 800000);
   return { denied: null, release: () => active.delete(key) };
 }
 export async function body(request: Request) {
-  if (Number(request.headers.get("content-length")) > 18000)
+  if (Number(request.headers.get("content-length")) > 180000)
     throw Error("Your input is too long.");
   const text = await request.text();
-  if (text.length > 18000) throw Error("Your input is too long.");
+  if (text.length > 180000) throw Error("Your input is too long.");
   try {
     return JSON.parse(text);
   } catch {

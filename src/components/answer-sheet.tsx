@@ -1,5 +1,6 @@
 "use client";
-import { AudioLines, ArrowRight, Check } from "lucide-react";
+import { useState } from "react";
+import { AudioLines, ArrowRight, ArrowLeft, Check } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { type Question, isAnswered } from "../lib/questions";
@@ -16,6 +17,15 @@ export function AnswerSheet({
   onSubmit: () => void;
   listening: boolean;
 }) {
+  const [active, setActive] = useState(0);
+  const typeLabels = {
+    mcq: "Multiple choice",
+    cloze: "Fill in the blank",
+    truefalse: "True / false",
+    matching: "Matching",
+    short: "Short answer",
+    ordering: "Event ordering",
+  };
   const completed = questions.filter((q, i) =>
     isAnswered(q, answers[i]),
   ).length;
@@ -57,6 +67,28 @@ export function AnswerSheet({
           {completed}/{questions.length}
         </span>
       </div>
+      <p className="text-xs text-muted-foreground mb-4">
+        Questions follow the conversation in order. Move to the next question as
+        you hear each detail.
+      </p>
+      <nav
+        aria-label="Question navigation"
+        className="flex flex-wrap gap-2 mb-5"
+      >
+        {questions.map((q, i) => (
+          <button
+            type="button"
+            key={i}
+            aria-label={`Question ${i + 1}${isAnswered(q, answers[i]) ? ", answered" : ""}`}
+            aria-current={active === i ? "step" : undefined}
+            onClick={() => setActive(i)}
+            className={`question-step size-9 rounded-md border text-xs flex items-center justify-center gap-1 ${active === i ? "bg-zinc-900 text-white border-zinc-900" : "border-border bg-white"}`}
+          >
+            {i + 1}
+            {isAnswered(q, answers[i]) && <Check size={10} />}
+          </button>
+        ))}
+      </nav>
       <form
         className="space-y-4"
         onSubmit={(e) => {
@@ -64,103 +96,128 @@ export function AnswerSheet({
           if (!listening && completed === questions.length) onSubmit();
         }}
       >
-        {questions.map((q, i) => (
-          <Card key={i} className="p-6">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-3">
-              {i + 1} / {questions.length} <span className="mx-2">·</span>
-              {q.category}
-            </p>
-            <h2 className="text-sm font-medium leading-6">{q.prompt}</h2>
-            {q.kind === "matching" || q.kind === "ordering" ? (
-              <div className="space-y-3 mt-4">
-                {q.items!.map((item, j) => (
-                  <div key={item.id}>
-                    <label
-                      className="text-xs block mb-2 leading-5"
-                      htmlFor={`answer-${i}-${j}`}
-                    >
-                      {q.kind === "matching"
-                        ? `${j + 1}. ${item.label}`
-                        : `Position ${j + 1}`}
-                    </label>
-                    <select
-                      required
-                      id={`answer-${i}-${j}`}
-                      value={answers[i]?.split("|")[j] || ""}
-                      onChange={(e) => setPart(i, j, e.target.value)}
-                    >
-                      <option value="" disabled>
-                        Select an answer
-                      </option>
-                      {q.kind === "matching"
-                        ? q.options!.map((o) => (
-                            <option key={o} value={o}>
-                              {o}
-                            </option>
-                          ))
-                        : q.items!.map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {o.label}
-                            </option>
-                          ))}
-                    </select>
+        {questions.map(
+          (q, i) =>
+            i === active && (
+              <Card key={i} className="p-6 question-enter">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-3">
+                  {i + 1} / {questions.length} <span className="mx-2">·</span>
+                  {q.kind ? typeLabels[q.kind] : q.category}
+                </p>
+                <h2 className="text-sm font-medium leading-6">{q.prompt}</h2>
+                {q.kind === "matching" || q.kind === "ordering" ? (
+                  <div className="space-y-3 mt-4">
+                    {q.items!.map((item, j) => (
+                      <div key={item.id}>
+                        <label
+                          className="text-xs block mb-2 leading-5"
+                          htmlFor={`answer-${i}-${j}`}
+                        >
+                          {q.kind === "matching"
+                            ? `${j + 1}. ${item.label}`
+                            : `Position ${j + 1}`}
+                        </label>
+                        <select
+                          required
+                          id={`answer-${i}-${j}`}
+                          value={answers[i]?.split("|")[j] || ""}
+                          onChange={(e) => setPart(i, j, e.target.value)}
+                        >
+                          <option value="" disabled>
+                            Select an answer
+                          </option>
+                          {q.kind === "matching"
+                            ? q.options!.map((o) => (
+                                <option key={o} value={o}>
+                                  {o}
+                                </option>
+                              ))
+                            : q.items!.map((o) => (
+                                <option key={o.id} value={o.id}>
+                                  {o.label}
+                                </option>
+                              ))}
+                        </select>
+                      </div>
+                    ))}
+                    {q.kind === "ordering" &&
+                      answers[i] &&
+                      !isAnswered(q, answers[i]) && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Use each event once.
+                        </p>
+                      )}
                   </div>
-                ))}
-                {q.kind === "ordering" &&
-                  answers[i] &&
-                  !isAnswered(q, answers[i]) && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Use each turn once.
-                    </p>
-                  )}
-              </div>
-            ) : q.options ? (
-              <div className="grid sm:grid-cols-2 gap-2 mt-4">
-                {q.options.map((o) => (
-                  <label
-                    key={o}
-                    className={`flex gap-2 items-center border rounded-md p-3 text-xs cursor-pointer ${answers[i] === o ? "border-zinc-800 bg-zinc-50" : "border-border"}`}
-                  >
+                ) : q.options?.length ? (
+                  <div className="grid sm:grid-cols-2 gap-2 mt-4">
+                    {q.options.map((o) => (
+                      <label
+                        key={o}
+                        className={`flex gap-2 items-center border rounded-md p-3 text-xs cursor-pointer ${answers[i] === o ? "border-zinc-800 bg-zinc-50" : "border-border"}`}
+                      >
+                        <input
+                          required
+                          type="radio"
+                          name={`question${i}`}
+                          value={o}
+                          checked={answers[i] === o}
+                          onChange={() => onChange(i, o)}
+                        />
+                        {o}
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4">
+                    <label className="field" htmlFor={`answer${i}`}>
+                      {q.kind === "cloze" ? "Missing word" : "Your answer"}
+                    </label>
                     <input
+                      id={`answer${i}`}
                       required
-                      type="radio"
-                      name={`question${i}`}
-                      value={o}
-                      checked={answers[i] === o}
-                      onChange={() => onChange(i, o)}
+                      type="text"
+                      autoComplete="off"
+                      value={answers[i] || ""}
+                      onChange={(e) => onChange(i, e.target.value)}
                     />
-                    {o}
-                  </label>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-4">
-                <label className="field" htmlFor={`answer${i}`}>
-                  {q.kind === "cloze" ? "Missing word" : "Your answer"}
-                </label>
-                <input
-                  id={`answer${i}`}
-                  required
-                  type="text"
-                  autoComplete="off"
-                  value={answers[i] || ""}
-                  onChange={(e) => onChange(i, e.target.value)}
-                />
-              </div>
-            )}
-          </Card>
-        ))}
+                  </div>
+                )}
+              </Card>
+            ),
+        )}
+        <div className="flex items-center justify-between pt-3 gap-3 flex-wrap">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={active === 0}
+            onClick={() => setActive((a) => a - 1)}
+          >
+            <ArrowLeft />
+            Previous
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Question {active + 1} of {questions.length}
+          </span>
+          {active < questions.length - 1 && (
+            <Button type="button" onClick={() => setActive((a) => a + 1)}>
+              Next question
+              <ArrowRight />
+            </Button>
+          )}
+        </div>
         <div className="flex items-center justify-between pt-3 gap-3">
           <span className="text-xs text-muted-foreground">
             {completed} of {questions.length} answered
           </span>
-          <Button
-            type="submit"
-            disabled={listening || completed < questions.length}
-          >
-            {listening ? "Finish listening to submit" : "Submit all answers"}
-            <ArrowRight />
-          </Button>
+          {active === questions.length - 1 && (
+            <Button
+              type="submit"
+              disabled={listening || completed < questions.length}
+            >
+              {listening ? "Finish listening to submit" : "Submit all answers"}
+              <ArrowRight />
+            </Button>
+          )}
         </div>
       </form>
     </div>

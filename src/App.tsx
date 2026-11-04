@@ -12,6 +12,7 @@ import {
   Upload,
   Users,
   Volume2,
+  Settings2,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Card } from "./components/ui/card";
@@ -23,14 +24,24 @@ import {
   type Draft,
 } from "./components/conversation-studio";
 type Lang = "en" | "te" | "hi";
-import {
-  buildQuestions,
-  gradeAnswer,
-  isAnswered,
-  displayAnswer,
-  type Question,
-} from "./lib/questions";
+import { gradeAnswer, isAnswered, type Question } from "./lib/questions";
 import { AnswerSheet } from "./components/answer-sheet";
+import {
+  ResultCelebration,
+  playResultSound,
+} from "./components/result-celebration";
+import { orderQuestions } from "./lib/assessment-validation";
+import { ResultQuestion } from "./components/result-question";
+import { QuestionPreview } from "./components/question-preview";
+import {
+  parseDialogue,
+  introduceSpeakers,
+  chunkSpeech,
+  formatDuration,
+  estimatedSeconds,
+  type SessionMinutes,
+} from "./lib/session-content";
+import { audioDuration, playOnce, type AudioPart } from "./lib/audio";
 type Session = {
   title: string;
   lines: string[][];
@@ -38,6 +49,9 @@ type Session = {
   questions: Question[];
   speed: number;
   lang: Lang;
+  scenario?: string;
+  cast?: { name: string; role: string }[];
+  durationSeconds?: number;
   answers?: string[];
   score?: number;
   xp?: number;
@@ -136,7 +150,6 @@ export default function App() {
     [lang, setLang] = useState<Lang>("en"),
     [count, setCount] = useState(3),
     [speed, setSpeed] = useState(1),
-    [focus, setFocus] = useState("balanced"),
     [custom, setCustom] = useState(""),
     [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]),
     [voiceIds, setVoiceIds] = useState<string[]>([]),
@@ -158,10 +171,68 @@ export default function App() {
     [draftSaved, setDraftSaved] = useState(false),
     [audioBusy, setAudioBusy] = useState(false),
     [prepared, setPrepared] = useState<{
-      url: string;
+      parts: AudioPart[];
+      duration: number;
       fingerprint: string;
     } | null>(null);
   const [testMode, setTestMode] = useState("live");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const [effectsOn, setEffectsOn] = useState(true);
+  useEffect(() => {
+    try {
+      const p = JSON.parse(localStorage.getItem("attune-preferences") || "{}");
+      setSoundOn(p.sound !== false);
+      setEffectsOn(p.effects !== false);
+    } catch {}
+  }, []);
+  function updateFeedbackPreference(key: "sound" | "effects", value: boolean) {
+    if (key === "sound") setSoundOn(value);
+    else setEffectsOn(value);
+    try {
+      localStorage.setItem(
+        "attune-preferences",
+        JSON.stringify({
+          sound: key === "sound" ? value : soundOn,
+          effects: key === "effects" ? value : effectsOn,
+        }),
+      );
+    } catch {}
+  }
+  const [targetMinutes, setTargetMinutes] = useState<SessionMinutes>(2);
+  const [customContext, setCustomContext] = useState<{
+    scenario?: string;
+    cast?: { name: string; role: string }[];
+  }>({});
+  const [bank, setBank] = useState<{
+    key: string;
+    lang: Lang;
+    questions: Question[];
+  } | null>(null);
+  const [prepareStatus, setPrepareStatus] = useState("");
+  const audioCache = useRef(new Map<string, AudioPart>());
+  const dialogueKey = (lines: string[][]) =>
+    lines.map(([n, t]) => `${n}: ${t}`).join("\n");
+  async function ensureAssessment(s: Session) {
+    const key = dialogueKey(s.lines);
+    if (s.questions.length)
+      return { ...s, questions: orderQuestions(s.questions) };
+    setPrepareStatus("Building content-based test questions…");
+    const r = await fetch("/api/questions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dialogue: key,
+        lang: s.lang,
+        minutes: targetMinutes,
+      }),
+    });
+    const data = (await r.json()) as { questions: Question[]; error?: string };
+    if (!r.ok) throw Error(data.error || "Could not build the question set.");
+    setBank({ key, lang: s.lang, questions: orderQuestions(data.questions) });
+    return { ...s, questions: orderQuestions(data.questions) };
+  }
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
     if (lang !== "en") setSpeechProvider("elevenlabs");
@@ -201,14 +272,25 @@ export default function App() {
     return () => controller.abort();
   }, [speechProvider]);
   useEffect(() => {
-    setPrepared((old) => {
-      if (old) URL.revokeObjectURL(old.url);
-      return null;
-    });
+    for (const part of audioCache.current.values())
+      URL.revokeObjectURL(part.url);
+    audioCache.current.clear();
+    setPrepared(null);
   }, [custom, source, lang, scenario, count, cloudIds, speechProvider]);
   function useConversation(d: Omit<Draft, "id" | "createdAt">) {
     setCustom(d.dialogue);
     setCustomTitle(d.title);
+    setTargetMinutes(d.minutes || 2);
+    setCustomContext({ scenario: d.scenario, cast: d.cast });
+    setBank(
+      d.questions?.length
+        ? {
+            key: dialogueKey(parseDialogue(d.dialogue)),
+            lang: d.lang,
+            questions: orderQuestions(d.questions),
+          }
+        : null,
+    );
     setLang(d.lang);
     setCount(d.speakers);
     setSource("custom");
@@ -217,6 +299,41 @@ export default function App() {
     setError("");
     window.scrollTo(0, 0);
   }
+  useEffect(() => {
+    if (source !== "custom" || !custom.trim()) return;
+    const timer = window.setTimeout(() => {
+      try {
+        const lines = parseDialogue(custom);
+        if (new Set(lines.map((l) => l[0])).size !== count) return;
+        saveDraft({
+          title: customTitle || "Your conversation",
+          dialogue: custom,
+          lang,
+          speakers: count,
+          minutes: targetMinutes,
+          scenario: customContext.scenario,
+          cast: customContext.cast,
+          questions:
+            bank?.key === dialogueKey(lines) && bank.lang === lang
+              ? orderQuestions(bank.questions)
+              : [],
+        });
+        setDraftSaved(true);
+      } catch {
+        setDraftSaved(false);
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [
+    custom,
+    customTitle,
+    source,
+    lang,
+    count,
+    targetMinutes,
+    customContext,
+    bank,
+  ]);
   function saveWritten() {
     try {
       prepare();
@@ -225,6 +342,11 @@ export default function App() {
         dialogue: custom,
         lang,
         speakers: count,
+        minutes: targetMinutes,
+        scenario: customContext.scenario,
+        cast: customContext.cast,
+        questions:
+          bank?.key === dialogueKey(prepare().lines) ? bank.questions : [],
       });
       setDraftSaved(true);
       setError("");
@@ -239,87 +361,96 @@ export default function App() {
       setError("Generate a conversation, then choose Use for listening.");
       return;
     }
-    if (speechProvider === "browser" && lang === "en") {
-      await startBrowser();
-      return;
-    }
     if (running.current || audioBusy) return;
     let started = false;
+    setAudioBusy(true);
+    setError("");
     try {
-      const s = prepare();
+      let s = await ensureAssessment(prepare());
+      saveDraft({
+        title: s.title,
+        dialogue: dialogueKey(s.lines),
+        lang: s.lang,
+        speakers: s.speakers.length,
+        minutes: targetMinutes,
+        scenario: s.scenario,
+        cast: s.cast,
+        questions: s.questions,
+      });
+      s = { ...s, lines: introduceSpeakers(s.lines, s.lang, s.scenario) };
+      if (speechProvider === "browser" && lang === "en") {
+        await startBrowser(s);
+        return;
+      }
       const ids = s.speakers.map((_, i) => cloudIds[i] || cloudVoices[i]?.id);
       if (ids.some((id) => !id) || new Set(ids).size !== s.speakers.length)
         throw Error("Choose a different ElevenLabs voice for every speaker.");
       const fingerprint = JSON.stringify({ lines: s.lines, lang: s.lang, ids });
       if (!prepared || prepared.fingerprint !== fingerprint) {
-        setAudioBusy(true);
-        setError("");
-        const r = await fetch("/api/speech", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lang: s.lang,
-            inputs: s.lines.map(([name, text]) => ({
-              text,
-              voice_id: ids[s.speakers.indexOf(name)],
-            })),
-          }),
-        });
-        if (!r.ok) {
-          const d = (await r.json()) as {
-            error?: string;
-            voices: { id: string; name: string; description: string }[];
-          };
-          throw Error(d.error || "Could not prepare the audio.");
+        const chunks = chunkSpeech(
+          s.lines.map(([name, text]) => ({
+            text,
+            voice_id: ids[s.speakers.indexOf(name)],
+          })),
+        );
+        const parts: AudioPart[] = [];
+        for (let i = 0; i < chunks.length; i++) {
+          setPrepareStatus(`Preparing audio ${i + 1} of ${chunks.length}…`);
+          const key = JSON.stringify({ lang: s.lang, inputs: chunks[i] });
+          let part = audioCache.current.get(key);
+          if (!part) {
+            const r = await fetch("/api/speech", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: key,
+            });
+            if (!r.ok) {
+              const data = (await r.json()) as { error?: string };
+              throw Error(data.error || "Could not prepare an audio part.");
+            }
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+            try {
+              part = { url, duration: await audioDuration(url) };
+            } catch (e) {
+              URL.revokeObjectURL(url);
+              throw e;
+            }
+            audioCache.current.set(key, part);
+          }
+          parts.push(part);
         }
-        const blob = await r.blob();
-        if (prepared) URL.revokeObjectURL(prepared.url);
-        setPrepared({ url: URL.createObjectURL(blob), fingerprint });
+        setPrepared({
+          parts,
+          duration: parts.reduce((n, p) => n + p.duration, 0),
+          fingerprint,
+        });
         return;
       }
       running.current = true;
       started = true;
+      s.durationSeconds = prepared.duration / s.speed;
       setSession(s);
       setAnswers(Array(s.questions.length).fill(""));
       setPhase("listening");
-      setError("");
-      const audio = new Audio(prepared.url);
-      audioRef.current = audio;
-      audio.playbackRate = s.speed;
-      audio.preservesPitch = true;
-      await new Promise<void>((resolve, reject) => {
-        audio.onended = () => resolve();
-        audio.onerror = () =>
-          reject(Error("Playback failed. This attempt was discarded."));
-        audio.onpause = () => {
-          if (!audio.ended)
-            reject(
-              Error("Playback was interrupted. This attempt was discarded."),
-            );
-        };
-        audio
-          .play()
-          .catch(() =>
-            reject(
-              Error(
-                "Your browser blocked playback. Allow audio for Attune, then start a new session.",
-              ),
-            ),
-          );
+      await playOnce(prepared.parts, s.speed, (a) => {
+        audioRef.current = a;
       });
       setPhase("questions");
-      window.scrollTo(0, 0);
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Unable to play this conversation.",
+        e instanceof Error ? e.message : "Unable to prepare this session.",
       );
       setPhase("setup");
       setSession(null);
     } finally {
       running.current = false;
       setAudioBusy(false);
+      setPrepareStatus("");
       if (started) {
-        if (prepared) URL.revokeObjectURL(prepared.url);
+        for (const part of audioCache.current.values())
+          URL.revokeObjectURL(part.url);
+        audioCache.current.clear();
         setPrepared(null);
         audioRef.current = null;
       }
@@ -359,74 +490,31 @@ export default function App() {
         ]
       : ["Maya", "Arjun", "Leah"];
   function go(v: string) {
-    if (phase !== "setup") return;
+    if (phase !== "setup" || audioBusy) return;
     setView(v);
     setError("");
   }
   function prepare(): Session {
-    let lines: string[][];
-    if (source === "custom") {
-      lines = custom
-        .trim()
-        .split(/\r?\n/)
-        .filter((l) => l.trim())
-        .map((l) => {
-          const i = l.indexOf(":");
-          if (i < 1) throw Error("Use Speaker: dialogue on every line.");
-          return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-        });
-      const n = new Set(lines.map((l) => l[0])).size;
-      if (n !== count)
-        throw Error(
-          `The dialogue has ${n} speakers. Change the speaker count to match.`,
-        );
-      if (
-        lines.length < 4 ||
-        lines.length > 30 ||
-        lines.some((l) => !l[1] || l[1].length > 400)
-      )
-        throw Error("Use 4–30 turns with 1–400 characters per turn.");
-    } else lines = lang === "en" ? selected.lines : translations[lang];
+    const lines =
+      source === "custom"
+        ? parseDialogue(custom)
+        : lang === "en"
+          ? selected.lines
+          : translations[lang];
     const speakers = [...new Set(lines.map((l) => l[0]))];
-    const questions: Question[] = buildQuestions(lines);
-    if (source === "curated" && focus !== "speaker") {
-      if (lang !== "en" || scenario === "weekend")
-        questions.push(
-          {
-            prompt: "At what hour did the friends agree to meet? Use digits.",
-            answer: "11",
-            category: "Detail recall",
-            explanation: "Arjun suggested eleven, and Leah agreed.",
-          },
-          {
-            prompt: "What will Arjun bring instead of his camera?",
-            answer: "His phone",
-            options: ["His phone", "A notebook", "An umbrella", "A map"],
-            category: "Content",
-            explanation: "His camera is being repaired.",
-          },
-          {
-            prompt: "Why might they visit the museum?",
-            answer: "Because of rain",
-            options: [
-              "Because of rain",
-              "The café is closed",
-              "To repair a camera",
-              "To attend a class",
-            ],
-            category: "Inference",
-            explanation: "Leah suggests the museum if it rains.",
-          },
-        );
-      else
-        questions.push({
-          prompt: "Who spoke last?",
-          answer: lines.at(-1)![0],
-          options: [...speakers, "Nobody"],
-          category: "Sequence",
-          explanation: "Leah closes the conversation.",
-        });
-    }
+    if (speakers.length !== count)
+      throw Error(
+        `The dialogue has ${speakers.length} speakers. Change the speaker count to match.`,
+      );
+    const key = dialogueKey(lines);
+    const scenarioBrief =
+      source === "custom"
+        ? customContext.scenario || customTitle
+        : lang === "en"
+          ? selected.description
+          : lang === "te"
+            ? "ముగ్గురు స్నేహితులు వారాంతపు ప్రణాళిక గురించి మాట్లాడుకుంటున్నారు."
+            : "तीन मित्र सप्ताहांत की योजना पर चर्चा कर रहे हैं।";
     return {
       title:
         source === "custom"
@@ -436,17 +524,18 @@ export default function App() {
             : "The weekend plan",
       lines,
       speakers,
-      questions,
+      questions: bank?.key === key && bank.lang === lang ? bank.questions : [],
+      scenario: scenarioBrief,
+      cast: source === "custom" ? customContext.cast : undefined,
       speed,
       lang,
     };
   }
-  async function startBrowser() {
+  async function startBrowser(s: Session) {
     if (running.current) return;
     try {
       if (!window.speechSynthesis || !matching.length)
         throw Error("Choose ElevenLabs for reliable multilingual speech.");
-      const s = prepare();
       const assignments = s.speakers.map(
         (_, i) =>
           matching.find((v) => v.voiceURI === voiceIds[i]) ||
@@ -466,13 +555,9 @@ export default function App() {
           u.lang = assignments[i].lang;
           u.rate = s.speed;
           u.pitch = [1.15, 0.75, 1.45, 0.9, 1.3, 0.65][i];
-          u.onend = () => resolve();
-          u.onerror = () =>
-            reject(
-              Error(
-                "Audio was interrupted. This attempt was discarded. Check your output device and start a new session.",
-              ),
-            );
+          const timeout = window.setTimeout(() => reject(Error("Device speech did not finish. Choose ElevenLabs in Settings for reliable playback.")), Math.max(20000, text.split(/\s+/).length / (2 * s.speed) * 1000 + 15000));
+          u.onend = () => { clearTimeout(timeout); resolve(); };
+          u.onerror = () => { clearTimeout(timeout); reject(Error("Audio was interrupted. This attempt was discarded. Choose ElevenLabs in Settings or check your output device.")); };
           speechSynthesis.speak(u);
         });
       }
@@ -500,6 +585,7 @@ export default function App() {
     ).length;
     const score = Math.round((correct / session.questions.length) * 100),
       xp = Math.round(correct * 15 * (0.75 + session.speed * 0.25));
+    if (soundOn) playResultSound(score);
     setSession({ ...session, answers, score, xp });
     const entry = {
       id: Date.now(),
@@ -578,7 +664,8 @@ export default function App() {
           ].map((n) => (
             <button
               key={n.id}
-              disabled={phase !== "setup"}
+              aria-label={n.label}
+              disabled={phase !== "setup" || audioBusy}
               onClick={() => go(n.id)}
               aria-current={view === n.id ? "page" : undefined}
               className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-[13px] transition-colors disabled:opacity-40 ${view === n.id ? "bg-zinc-100 text-zinc-950 font-medium" : "text-zinc-500 hover:bg-zinc-50"}`}
@@ -631,8 +718,8 @@ export default function App() {
                   {history.length} sessions completed
                 </span>
               </div>
-              <div className="grid lg:grid-cols-[minmax(0,1fr)_260px] gap-8 xl:gap-12">
-                <Card className="p-6 sm:p-7">
+              <Card className="p-6 sm:p-8 setup-surface">
+                <fieldset disabled={audioBusy} className="min-w-0">
                   <Section number="01" title="Conversation">
                     <div className="inline-flex flex-wrap rounded-lg bg-zinc-100 p-1 mb-5 gap-1">
                       {[
@@ -732,7 +819,7 @@ export default function App() {
                         />
                         <div className="flex justify-between items-center mt-2">
                           <span className="text-[11px] text-muted-foreground">
-                            4–30 turns · 2–6 speakers
+                            4–240 turns · 2–6 speakers
                           </span>
                           <Button
                             size="sm"
@@ -751,9 +838,9 @@ export default function App() {
                             onChange={async (e) => {
                               const f = e.target.files?.[0];
                               if (!f) return;
-                              if (f.size > 30000) {
+                              if (f.size > 120000) {
                                 setError(
-                                  "Choose a text file smaller than 30 KB.",
+                                  "Choose a text file smaller than 120 KB.",
                                 );
                                 return;
                               }
@@ -768,232 +855,290 @@ export default function App() {
                           onClick={saveWritten}
                         >
                           {draftSaved
-                            ? "Saved in Library"
-                            : "Save conversation for later"}
+                            ? "Automatically saved to Library"
+                            : "Save now"}
                         </Button>
                       </>
                     )}
                   </Section>
-                  <Section number="02" title="Listening settings">
-                    <div className="mb-5">
-                      <Label htmlFor="test-mode">Practice mode</Label>
-                      <select
-                        id="test-mode"
-                        value={testMode}
-                        onChange={(e) => setTestMode(e.target.value)}
-                      >
-                        <option value="live">
-                          Listen and answer — IELTS style
-                        </option>
-                        <option value="recall">
-                          Listen first, answer from memory
-                        </option>
-                      </select>
-                      <p className="text-[11px] text-muted-foreground mt-2 leading-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 py-4 mb-5 border-b border-border">
+                    <div>
+                      <p className="text-xs font-medium">
+                        Ready with sensible defaults
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {langs[lang]} · {count} speakers · {speed.toFixed(1)}× ·{" "}
+                        {speechProvider === "elevenlabs"
+                          ? "ElevenLabs"
+                          : "Device speech"}{" "}
+                        ·{" "}
                         {testMode === "live"
-                          ? "Questions stay open during the recording. Submit after the audio ends."
-                          : "Focus only on listening. Questions appear after the audio ends."}
+                          ? "Answer while listening"
+                          : "Memory practice"}
                       </p>
                     </div>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="language">Language</Label>
-                        <select
-                          id="language"
-                          value={lang}
-                          onChange={(e) => {
-                            setLang(e.target.value as Lang);
-                            setVoiceIds([]);
-                            if (e.target.value !== "en")
-                              setSpeechProvider("elevenlabs");
-                          }}
-                        >
-                          <option value="en">English</option>
-                          <option value="te">Telugu · తెలుగు</option>
-                          <option value="hi">Hindi · हिन्दी</option>
-                        </select>
-                      </div>
-                      <div>
-                        <Label htmlFor="speakers">Speakers</Label>
-                        <select
-                          id="speakers"
-                          disabled={source === "curated"}
-                          value={count}
-                          onChange={(e) => setCount(+e.target.value)}
-                        >
-                          {[2, 3, 4, 5, 6].map((n) => (
-                            <option key={n} value={n}>
-                              {n} speakers
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="mt-6">
-                      <div className="flex justify-between items-center">
-                        <Label htmlFor="speed">Playback speed</Label>
-                        <span className="text-xs font-medium tabular-nums bg-zinc-100 rounded px-2 py-1">
-                          {speed.toFixed(1)}×
-                        </span>
-                      </div>
-                      <input
-                        className="w-full mt-2 h-4"
-                        id="speed"
-                        type="range"
-                        min=".5"
-                        max="3"
-                        step=".1"
-                        value={speed}
-                        onChange={(e) => setSpeed(+e.target.value)}
-                      />
-                      <div className="flex justify-between text-[10px] text-zinc-400 mt-1">
-                        <span>0.5×</span>
-                        <button
-                          onClick={() => setSpeed(1)}
-                          className="hover:text-black"
-                        >
-                          1.0× normal
-                        </button>
-                        <span>3.0×</span>
-                      </div>
-                    </div>
-                    <div className="mt-6">
-                      <Label htmlFor="focus">Focus</Label>
-                      <select
-                        id="focus"
-                        value={focus}
-                        onChange={(e) => setFocus(e.target.value)}
-                      >
-                        <option value="balanced">
-                          Balanced — speakers and details
-                        </option>
-                        <option value="speaker">
-                          Speaker tracking — who said what
-                        </option>
-                        <option value="memory">Memory — more questions</option>
-                      </select>
-                    </div>
-                  </Section>
-                  <section>
-                    <div className="mb-5">
-                      <Label htmlFor="speech-provider">Speech provider</Label>
-                      <select
-                        id="speech-provider"
-                        value={speechProvider}
-                        onChange={(e) => {
-                          setSpeechProvider(e.target.value);
-                          setError("");
-                        }}
-                      >
-                        <option
-                          value="elevenlabs"
-                          disabled={!capabilities.speech}
-                        >
-                          ElevenLabs
-                          {!capabilities.speech ? " — not connected" : ""}
-                        </option>
-                        <option value="browser" disabled={lang !== "en"}>
-                          Device voices — English only
-                        </option>
-                      </select>
-                    </div>
-                    <div className="flex items-center justify-between mb-5">
-                      <div className="flex gap-3 items-center">
-                        <span className="text-xs text-muted-foreground">
-                          03
-                        </span>
-                        <h2 className="text-sm font-semibold">Voices</h2>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground">
-                        {speechProvider === "elevenlabs"
-                          ? "Eleven v3"
-                          : "Device speech"}
-                      </span>
-                    </div>
-                    <div className="space-y-3">
-                      {Array.from({ length: count }, (_, i) => (
-                        <div
-                          className="flex gap-3 items-center"
-                          key={`${lang}-${i}`}
-                        >
-                          <div className="size-8 rounded-full border border-border flex items-center justify-center text-[11px] text-zinc-500 shrink-0">
-                            {String(i + 1).padStart(2, "0")}
-                          </div>
-                          <label
-                            htmlFor={`voice${i}`}
-                            className="text-xs w-16 shrink-0 truncate"
-                          >
-                            {speakerNames[i] || `Speaker ${i + 1}`}
-                          </label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-expanded={settingsOpen}
+                      aria-controls="session-settings"
+                      onClick={() => setSettingsOpen(!settingsOpen)}
+                    >
+                      <Settings2 />
+                      Settings
+                    </Button>
+                  </div>
+                  {settingsOpen && (
+                    <div id="session-settings" className="settings-reveal">
+                      <Section number="02" title="Listening preferences">
+                        <div className="mb-5">
+                          <Label htmlFor="test-mode">Practice mode</Label>
                           <select
-                            id={`voice${i}`}
-                            aria-label={`Voice for ${speakerNames[i] || `speaker ${i + 1}`}`}
-                            value={
-                              speechProvider === "elevenlabs"
-                                ? cloudIds[i] || cloudVoices[i]?.id || ""
-                                : voiceIds[i] ||
-                                  matching[i % matching.length]?.voiceURI ||
-                                  ""
-                            }
+                            id="test-mode"
+                            value={testMode}
+                            onChange={(e) => setTestMode(e.target.value)}
+                          >
+                            <option value="live">
+                              Listen and answer — IELTS style
+                            </option>
+                            <option value="recall">
+                              Listen first, answer from memory
+                            </option>
+                          </select>
+                          <p className="text-[11px] text-muted-foreground mt-2 leading-5">
+                            {testMode === "live"
+                              ? "Questions stay open during the recording. Submit after the audio ends."
+                              : "Focus only on listening. Questions appear after the audio ends."}
+                          </p>
+                        </div>
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="language">Language</Label>
+                            <select
+                              id="language"
+                              value={lang}
+                              onChange={(e) => {
+                                setLang(e.target.value as Lang);
+                                setVoiceIds([]);
+                                if (e.target.value !== "en")
+                                  setSpeechProvider("elevenlabs");
+                              }}
+                            >
+                              <option value="en">English</option>
+                              <option value="te">Telugu · తెలుగు</option>
+                              <option value="hi">Hindi · हिन्दी</option>
+                            </select>
+                          </div>
+                          <div>
+                            <Label htmlFor="speakers">Speakers</Label>
+                            <select
+                              id="speakers"
+                              disabled={source === "curated"}
+                              value={count}
+                              onChange={(e) => setCount(+e.target.value)}
+                            >
+                              {[2, 3, 4, 5, 6].map((n) => (
+                                <option key={n} value={n}>
+                                  {n} speakers
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="mt-6">
+                          <div className="flex justify-between items-center">
+                            <Label htmlFor="speed">Playback speed</Label>
+                            <span className="text-xs font-medium tabular-nums bg-zinc-100 rounded px-2 py-1">
+                              {speed.toFixed(1)}×
+                            </span>
+                          </div>
+                          <input
+                            className="w-full mt-2 h-4"
+                            id="speed"
+                            type="range"
+                            min=".5"
+                            max="3"
+                            step=".1"
+                            value={speed}
+                            onChange={(e) => setSpeed(+e.target.value)}
+                          />
+                          <div className="flex justify-between text-[10px] text-zinc-400 mt-1">
+                            <span>0.5×</span>
+                            <button
+                              onClick={() => setSpeed(1)}
+                              className="hover:text-black"
+                            >
+                              1.0× normal
+                            </button>
+                            <span>3.0×</span>
+                          </div>
+                        </div>
+                      </Section>
+                      <section>
+                        <div className="mb-5">
+                          <Label htmlFor="speech-provider">
+                            Speech provider
+                          </Label>
+                          <select
+                            id="speech-provider"
+                            value={speechProvider}
                             onChange={(e) => {
-                              const value = e.target.value;
-                              if (speechProvider === "elevenlabs")
-                                setCloudIds((old) => {
-                                  const next = [...old];
-                                  next[i] = value;
-                                  return next;
-                                });
-                              else
-                                setVoiceIds((old) => {
-                                  const next = [...old];
-                                  next[i] = value;
-                                  return next;
-                                });
+                              setSpeechProvider(e.target.value);
+                              setError("");
                             }}
                           >
-                            {speechProvider === "elevenlabs" ? (
-                              cloudVoices.length ? (
-                                cloudVoices.map((v) => (
-                                  <option key={v.id} value={v.id}>
-                                    {v.name}
-                                    {v.description ? ` · ${v.description}` : ""}
-                                  </option>
-                                ))
-                              ) : (
-                                <option value="">Loading voices…</option>
-                              )
-                            ) : matching.length ? (
-                              matching.map((v) => (
-                                <option key={v.voiceURI} value={v.voiceURI}>
-                                  {v.name.replace("Microsoft ", "")}
-                                </option>
-                              ))
-                            ) : (
-                              <option value="">No voice available</option>
-                            )}
+                            <option
+                              value="elevenlabs"
+                              disabled={!capabilities.speech}
+                            >
+                              ElevenLabs
+                              {!capabilities.speech ? " — not connected" : ""}
+                            </option>
+                            <option value="browser" disabled={lang !== "en"}>
+                              Device voices — English only
+                            </option>
                           </select>
                         </div>
-                      ))}
+                        <div className="flex items-center justify-between mb-5">
+                          <div className="flex gap-3 items-center">
+                            <span className="text-xs text-muted-foreground">
+                              03
+                            </span>
+                            <h2 className="text-sm font-semibold">Voices</h2>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground">
+                            {speechProvider === "elevenlabs"
+                              ? "Eleven v3"
+                              : "Device speech"}
+                          </span>
+                        </div>
+                        <div className="space-y-3">
+                          {Array.from({ length: count }, (_, i) => (
+                            <div
+                              className="flex gap-3 items-center"
+                              key={`${lang}-${i}`}
+                            >
+                              <div className="size-8 rounded-full border border-border flex items-center justify-center text-[11px] text-zinc-500 shrink-0">
+                                {String(i + 1).padStart(2, "0")}
+                              </div>
+                              <label
+                                htmlFor={`voice${i}`}
+                                className="text-xs w-16 shrink-0 truncate"
+                              >
+                                {speakerNames[i] || `Speaker ${i + 1}`}
+                              </label>
+                              <select
+                                id={`voice${i}`}
+                                aria-label={`Voice for ${speakerNames[i] || `speaker ${i + 1}`}`}
+                                value={
+                                  speechProvider === "elevenlabs"
+                                    ? cloudIds[i] || cloudVoices[i]?.id || ""
+                                    : voiceIds[i] ||
+                                      matching[i % matching.length]?.voiceURI ||
+                                      ""
+                                }
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (speechProvider === "elevenlabs")
+                                    setCloudIds((old) => {
+                                      const next = [...old];
+                                      next[i] = value;
+                                      return next;
+                                    });
+                                  else
+                                    setVoiceIds((old) => {
+                                      const next = [...old];
+                                      next[i] = value;
+                                      return next;
+                                    });
+                                }}
+                              >
+                                {speechProvider === "elevenlabs" ? (
+                                  cloudVoices.length ? (
+                                    cloudVoices.map((v) => (
+                                      <option key={v.id} value={v.id}>
+                                        {v.name}
+                                        {v.description
+                                          ? ` · ${v.description}`
+                                          : ""}
+                                      </option>
+                                    ))
+                                  ) : (
+                                    <option value="">Loading voices…</option>
+                                  )
+                                ) : matching.length ? (
+                                  matching.map((v) => (
+                                    <option key={v.voiceURI} value={v.voiceURI}>
+                                      {v.name.replace("Microsoft ", "")}
+                                    </option>
+                                  ))
+                                ) : (
+                                  <option value="">No voice available</option>
+                                )}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-5 mt-4">
+                          {speechProvider === "elevenlabs"
+                            ? "Choose distinct voices. Audio is prepared before your scored listen."
+                            : matching.length < count
+                              ? "Pitch varies between speakers. Install additional voices for clearer separation."
+                              : "Choose distinct voices to practice speaker recognition."}
+                          {lang !== "en" && source === "curated"
+                            ? " Telugu and Hindi use the weekend scenario. Feedback is in English."
+                            : ""}
+                        </p>
+                        <div className="flex flex-wrap gap-5 border-t border-border mt-5 pt-5">
+                          <label className="text-xs flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={soundOn}
+                              onChange={(e) =>
+                                updateFeedbackPreference(
+                                  "sound",
+                                  e.target.checked,
+                                )
+                              }
+                            />
+                            Result sounds
+                          </label>
+                          <label className="text-xs flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={effectsOn}
+                              onChange={(e) =>
+                                updateFeedbackPreference(
+                                  "effects",
+                                  e.target.checked,
+                                )
+                              }
+                            />
+                            Celebration effects
+                          </label>
+                        </div>
+                      </section>
                     </div>
-                    <p className="text-[11px] text-muted-foreground leading-5 mt-4">
-                      {speechProvider === "elevenlabs"
-                        ? "Choose distinct voices. Audio is prepared before your scored listen."
-                        : matching.length < count
-                          ? "Pitch varies between speakers. Install additional voices for clearer separation."
-                          : "Choose distinct voices to practice speaker recognition."}
-                      {lang !== "en" && source === "curated"
-                        ? " Telugu and Hindi use the weekend scenario. Feedback is in English."
-                        : ""}
-                    </p>
-                  </section>
-                </Card>
-                <aside className="space-y-6">
-                  <div className="border border-border rounded-xl p-5 bg-white">
+                  )}
+                  {bank &&
+                    (() => {
+                      try {
+                        return bank.key === dialogueKey(prepare().lines) &&
+                          bank.lang === lang ? (
+                          <QuestionPreview questions={bank.questions} />
+                        ) : null;
+                      } catch {
+                        return null;
+                      }
+                    })()}
+                </fieldset>
+                <aside className="space-y-5 border-t border-border mt-6 pt-6">
+                  <div className="session-summary">
                     <div className="flex items-center gap-2 text-xs font-medium mb-5">
                       <AudioLines className="size-4" />
                       Your session
                     </div>
-                    <dl className="text-xs space-y-4">
+                    <dl className="text-xs grid grid-cols-2 sm:grid-cols-4 gap-4">
                       {[
                         ["Language", langs[lang]],
                         ["Speakers", String(count)],
@@ -1018,20 +1163,53 @@ export default function App() {
                         onClick={start}
                       >
                         {audioBusy
-                          ? "Preparing audio…"
+                          ? prepareStatus || "Preparing session…"
                           : speechProvider === "elevenlabs" && !prepared
-                            ? "Prepare audio"
+                            ? "Prepare session"
                             : "Start listening"}
                         <ArrowRight />
                       </Button>
                       {prepared && (
                         <p role="status" className="text-[11px] leading-5 mt-3">
-                          Audio is ready. Start when you can give it your full
-                          attention.
+                          Audio ready ·{" "}
+                          {formatDuration(prepared.duration / speed)} at{" "}
+                          {speed.toFixed(1)}× · {prepared.parts.length} audio
+                          part{prepared.parts.length === 1 ? "" : "s"}. Plays
+                          through once without replay controls.
                         </p>
                       )}
                     </div>
                   </div>
+                  {source !== "generate" && (
+                    <div className="border border-border bg-white rounded-lg p-4 text-xs leading-6">
+                      <strong>Scenario and speakers</strong>
+                      <p className="text-muted-foreground mt-2">
+                        {source === "custom"
+                          ? customContext.scenario || customTitle
+                          : lang === "en"
+                            ? selected.description
+                            : lang === "te"
+                              ? "వారాంతపు ప్రణాళిక గురించి స్నేహితుల సంభాషణ."
+                              : "सप्ताहांत की योजना पर दोस्तों की बातचीत।"}
+                      </p>
+                      <ul className="mt-3">
+                        {speakerNames.slice(0, count).map((name) => (
+                          <li key={name}>
+                            <strong>{name}</strong>
+                            {customContext.cast?.find((c) => c.name === name)
+                              ?.role
+                              ? " — " +
+                                customContext.cast.find((c) => c.name === name)!
+                                  .role
+                              : ""}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-[11px] text-muted-foreground mt-2">
+                        Each voice introduces their name in the recording.
+                      </p>
+                    </div>
+                  )}
                   <div className="px-1">
                     <p className="text-xs font-medium flex items-center gap-2">
                       <LockKeyhole className="size-3.5" />
@@ -1059,7 +1237,7 @@ export default function App() {
                     Your progress stays in this browser.
                   </p>
                 </aside>
-              </div>
+              </Card>
             </>
           )}
           {(phase === "questions" ||
@@ -1094,6 +1272,7 @@ export default function App() {
               <Heading title="A little more attuned.">
                 Review what you caught, and what to listen for next time.
               </Heading>
+              <ResultCelebration score={session.score!} effects={effectsOn} />
               <div className="grid grid-cols-3 gap-3 mb-6">
                 {[
                   [`${session.score}%`, "Accuracy"],
@@ -1133,31 +1312,14 @@ export default function App() {
                 </p>
               )}
               <div className="space-y-3">
-                {session.questions.map((q, i) => {
-                  const correct = gradeAnswer(q, session.answers![i]);
-                  return (
-                    <Card key={i} className="p-6">
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-3">
-                        {correct ? "✓ Correct" : "Review this detail"} ·{" "}
-                        {q.category}
-                      </div>
-                      <h2 className="text-sm font-medium leading-6">
-                        {q.prompt}
-                      </h2>
-                      <p className="text-xs mt-3 text-muted-foreground">
-                        Your answer: {displayAnswer(q, session.answers![i])}
-                      </p>
-                      {!correct && (
-                        <p className="text-xs mt-2">
-                          Correct answer: {displayAnswer(q, q.answer)}
-                        </p>
-                      )}
-                      <p className="text-xs mt-2 text-muted-foreground">
-                        {q.explanation}
-                      </p>
-                    </Card>
-                  );
-                })}
+                {session.questions.map((q, i) => (
+                  <ResultQuestion
+                    key={i}
+                    question={q}
+                    answer={session.answers![i]}
+                    index={i}
+                  />
+                ))}
                 <Card className="p-6">
                   <h2 className="text-sm font-semibold mb-5">
                     Full transcript

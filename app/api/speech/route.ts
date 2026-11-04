@@ -16,13 +16,13 @@ export async function POST(request: Request) {
     if (
       !["en", "te", "hi"].includes(input.lang) ||
       !Array.isArray(input.inputs) ||
-      input.inputs.length < 4 ||
+      input.inputs.length < 1 ||
       input.inputs.length > 30 ||
       input.inputs.some(
         (i: { text: string; voice_id: string }) =>
           typeof i.text !== "string" ||
           !i.text.trim() ||
-          i.text.length > 400 ||
+          i.text.length > 1800 ||
           typeof i.voice_id !== "string" ||
           !/^[A-Za-z0-9_-]{5,80}$/.test(i.voice_id),
       ) ||
@@ -34,15 +34,18 @@ export async function POST(request: Request) {
       return json(
         {
           error:
-            "Use 4–30 spoken turns, at most 2,000 total characters, with a voice for each speaker.",
+            "Use 1–30 spoken turns per audio part, at most 2,000 total characters, with a voice for every turn.",
         },
         400,
       );
     const voices = new Set(
       input.inputs.map((i: { voice_id: string }) => i.voice_id),
     );
-    if (voices.size < 2 || voices.size > 6)
-      return json({ error: "Assign 2–6 distinct ElevenLabs voices." }, 400);
+    if (voices.size < 1 || voices.size > 6)
+      return json(
+        { error: "Assign a valid ElevenLabs voice to every turn." },
+        400,
+      );
     const response = await fetch(
       "https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128",
       {
