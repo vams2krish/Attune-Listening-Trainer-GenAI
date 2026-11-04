@@ -3,6 +3,7 @@ export function validateAssessment(
   value: unknown,
   lines: string[][],
   expectedCount?: number,
+  lang = "en",
 ): Question[] {
   if (
     !Array.isArray(value) ||
@@ -12,6 +13,12 @@ export function validateAssessment(
   )
     throw Error("The question set was incomplete. Please generate again.");
   const kinds = new Set<string>();
+  const trueFalse =
+    lang === "te"
+      ? ["నిజం", "అబద్ధం"]
+      : lang === "hi"
+        ? ["सही", "गलत"]
+        : ["True", "False"];
   for (const q of value) {
     if (
       !q ||
@@ -46,6 +53,25 @@ export function validateAssessment(
       throw Error(
         "The question set did not meet the practice format. Please generate again.",
       );
+    if (lang !== "en") {
+      const text = [
+        q.prompt,
+        q.category,
+        q.explanation,
+        ...q.options,
+        ...q.items.map((i: { label: string }) => i.label),
+        ...(q.kind === "ordering" ? [] : [q.answer]),
+      ].join(" ");
+      const script = lang === "te" ? /[\u0C00-\u0C7F]/u : /[\u0900-\u097F]/u;
+      if (
+        /[A-Za-z]/.test(text) ||
+        !script.test(q.prompt) ||
+        q.options.some((o: string) => /\p{L}/u.test(o) && !script.test(o))
+      )
+        throw Error(
+          "The questions did not use the selected language. Please generate again.",
+        );
+    }
     kinds.add(q.kind);
     if (
       q.kind === "mcq" &&
@@ -58,8 +84,8 @@ export function validateAssessment(
       );
     if (
       q.kind === "truefalse" &&
-      (!["True", "False"].includes(q.answer) ||
-        q.options.join("|") !== "True|False")
+      (!trueFalse.includes(q.answer) ||
+        q.options.join("|") !== trueFalse.join("|"))
     )
       throw Error("A true/false question was invalid. Please generate again.");
     if (q.kind === "matching" || q.kind === "ordering") {
@@ -106,7 +132,13 @@ export function validateAssessment(
     throw Error(
       "The question set did not include all six question types. Please generate again.",
     );
-  return orderQuestions(value as Question[]);
+  return orderQuestions(
+    (value as Question[]).map((q) => ({
+      ...q,
+      language: lang,
+      localeVersion: 2,
+    })),
+  );
 }
 
 /** Place a question after the last transcript turn needed to answer it. */

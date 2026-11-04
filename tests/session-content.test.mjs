@@ -31,3 +31,28 @@ test('all six dialogue names receive distinct voices and keep explicit bindings 
  for(const name of names)assert.equal(reordered[name],assigned[name]);
  assert.deepEqual(speakerNamesFromDialogue('Incomplete line\n  : text\nRavi: Hello'),['Ravi']);
 });
+
+
+test('voice style constraints correct incompatible stored assignments without silent fallback', async () => {
+ const {resolveSpeakerVoices}=await import('../src/lib/session-content.ts');
+ const voices=['f1','m1','f2','m2','n1']; const genders={f1:'female',f2:'female',m1:'male',m2:'male',n1:'neutral'};
+ const assigned=resolveSpeakerVoices(['A','B','C','D'],voices,{A:'m1',B:'f1'},{A:'female',B:'male',C:'female',D:'male'},genders);
+ assert.equal(genders[assigned.A],'female');assert.equal(genders[assigned.B],'male');
+ assert.equal(new Set(Object.values(assigned)).size,4);
+ assert.deepEqual(resolveSpeakerVoices(['A'],['m1'],{},{A:'female'},genders),{});
+ assert.deepEqual(resolveSpeakerVoices(['Unknown'],voices,{},{Unknown:'unselected'},genders),{});
+});
+
+
+test('Telugu and Hindi assessments localize every option and invalidate legacy English banks', async () => {
+ const {isAssessmentCurrent}=await import('../src/lib/questions.ts');
+ for(const [lang,words,boolean] of [['te',['ప్రశ్నను విని సరైన సమాధానాన్ని ఎంచుకోండి','వివరాలు','సంభాషణలో ఈ విషయం స్పష్టంగా చెప్పారు','ఒకటి','రెండు','మూడు','నాలుగు'],['నిజం','అబద్ధం']],['hi',['बातचीत सुनकर सही उत्तर चुनिए','विवरण','बातचीत में यह बात स्पष्ट रूप से कही गई है','एक','दो','तीन','चार'],['सही','गलत']]]) {
+  const localized=valid.map(q=>{
+   const options=q.kind==='truefalse'?boolean:q.kind==='mcq'?words.slice(3):q.kind==='matching'?words.slice(3,5):[];
+   return {...q,prompt:words[0],category:words[1],explanation:words[2],options,items:q.items.map((item,i)=>({...item,label:words[3+i]})),answer:q.kind==='ordering'?q.answer:q.kind==='truefalse'?boolean[0]:q.kind==='matching'?options.join('|'):words[3]};
+  });
+  const checked=validateAssessment(localized,lines,6,lang);
+  assert.ok(isAssessmentCurrent(checked,lang)); assert.equal(isAssessmentCurrent(valid,lang),false);
+  assert.throws(()=>validateAssessment(localized.map((q,i)=>i?q:{...q,options:['English',...q.options.slice(1)]}),lines,6,lang),/selected language/);
+ }
+});

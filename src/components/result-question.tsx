@@ -1,3 +1,4 @@
+import { assessmentText } from "../lib/assessment-copy";
 import { Check, X } from "lucide-react";
 import { Card } from "./ui/card";
 import { displayAnswer, gradeAnswer, type Question } from "../lib/questions";
@@ -5,11 +6,14 @@ export function ResultQuestion({
   question: q,
   answer,
   index,
+  lang = "en",
 }: {
   question: Question;
   answer: string;
   index: number;
+  lang?: string;
 }) {
+  const t = assessmentText(lang);
   const correct = gradeAnswer(q, answer);
   const values = answer.split("|"),
     expected = q.answer.split("|");
@@ -17,13 +21,13 @@ export function ResultQuestion({
     <Card className="p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3 mb-4">
         <span className="text-[11px] text-muted-foreground">
-          Question {index + 1} · {q.category}
+          {t("Question")} {index + 1} · {q.category}
         </span>
         <span
           className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold ${correct ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}
         >
           {correct ? <Check size={14} /> : <X size={14} />}{" "}
-          {correct ? "Correct" : "Incorrect"}
+          {correct ? t("Correct") : t("Incorrect")}
         </span>
       </div>
       <h2 className="text-sm font-medium leading-6 mb-4">{q.prompt}</h2>
@@ -33,8 +37,8 @@ export function ResultQuestion({
             const pass = values[i] === expected[i];
             const label = (v: string) =>
               q.kind === "ordering"
-                ? q.items!.find((x) => x.id === v)?.label || "No answer"
-                : v || "No answer";
+                ? q.items!.find((x) => x.id === v)?.label || t("No answer")
+                : v || t("No answer");
             return (
               <div
                 key={item.id}
@@ -43,7 +47,7 @@ export function ResultQuestion({
                 <p className="font-medium mb-2">
                   {q.kind === "matching"
                     ? `${i + 1}. ${item.label}`
-                    : `Position ${i + 1}`}
+                    : `${t("Position")} ${i + 1}`}
                 </p>
                 <p
                   className={`flex gap-2 ${pass ? "text-emerald-800" : "text-red-800"}`}
@@ -53,12 +57,16 @@ export function ResultQuestion({
                   ) : (
                     <X size={15} className="shrink-0 mt-0.5" />
                   )}
-                  <span>Your answer: {label(values[i])}</span>
+                  <span>
+                    {t("Your answer")}: {label(values[i])}
+                  </span>
                 </p>
                 {!pass && (
                   <p className="text-emerald-800 flex gap-2 mt-1">
                     <Check size={15} className="shrink-0 mt-0.5" />
-                    <span>Correct answer: {label(expected[i])}</span>
+                    <span>
+                      {t("Correct answer")}: {label(expected[i])}
+                    </span>
                   </p>
                 )}
               </div>
@@ -88,7 +96,7 @@ export function ResultQuestion({
                 </span>
                 <span className="flex-1">
                   <span className="text-muted-foreground mr-2">
-                    {String.fromCharCode(65 + i)}.
+                    {lang === "en" ? String.fromCharCode(65 + i) : i + 1}.
                   </span>
                   {option}
                 </span>
@@ -97,11 +105,11 @@ export function ResultQuestion({
                 >
                   {isCorrect
                     ? selected
-                      ? "✓ Your answer · correct"
-                      : "✓ Correct answer"
+                      ? `✓ ${t("Your answer")} · ${t("Correct")}`
+                      : `✓ ${t("Correct answer")}`
                     : selected
-                      ? "✕ Your answer"
-                      : "Incorrect option"}
+                      ? `✕ ${t("Your answer")}`
+                      : t("Incorrect option")}
                 </span>
               </div>
             );
@@ -114,26 +122,28 @@ export function ResultQuestion({
           >
             {correct ? <Check size={16} /> : <X size={16} />}
             <span>
-              <strong>Your answer:</strong> {answer || "No answer"}
+              <strong>{t("Your answer")}:</strong> {answer || t("No answer")}
             </span>
           </p>
           <p className="flex items-start gap-2 text-emerald-800">
             <Check size={16} />
             <span>
-              <strong>Correct answer:</strong> {displayAnswer(q, q.answer)}
+              <strong>{t("Correct answer")}:</strong>{" "}
+              {displayAnswer(q, q.answer)}
             </span>
           </p>
         </div>
       )}
       <div className="mt-4 border-t border-border pt-4">
-        <p className="text-xs font-medium mb-1">Why this answer is correct</p>
+        <p className="text-xs font-medium mb-1">
+          {t("Why this answer is correct")}
+        </p>
         <p className="text-xs text-muted-foreground leading-6">
           {q.explanation}
         </p>
         {q.evidence?.length ? (
           <p className="text-[10px] text-muted-foreground mt-2">
-            Transcript evidence: turn{q.evidence.length > 1 ? "s" : ""}{" "}
-            {q.evidence.join(", ")}
+            {t("Transcript evidence")}: {t("turns")} {q.evidence.join(", ")}
           </p>
         ) : null}
       </div>

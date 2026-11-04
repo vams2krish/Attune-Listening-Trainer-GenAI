@@ -16,7 +16,7 @@ Attune is a multilingual listening-practice app for auditory attention, speaker 
 - **Write or paste text:** enter a title and `Speaker: dialogue` turns or import a `.txt` file.
 - **Automatic Library:** generated conversations save immediately; valid written/imported edits save after a short debounce. Prepared curated conversations are saved too. Saved conversations stay on this device.
 - **One setup panel:** conversation, session summary, and start action share one surface. Optional Settings reveal practice mode, language, speed, speech provider, voices, sounds, and visual effects.
-- **Named voice assignments:** all 2–6 names come from the actual dialogue, including the generated preview. Voice choices are bound to names and remain attached when turns are reordered; each speaker receives a distinct available default voice.
+- **Named voice assignments:** all 2–6 names come from the actual dialogue. Generated fictional characters include a voice style; curated characters have explicit defaults. Settings filters ElevenLabs voices by the selected male/female/neutral style and preserves name-bound choices when turns are reordered. Older/manual conversations require an explicit style choice rather than guessing from names.
 - **Multilingual speech:** assign distinct ElevenLabs voices. `eleven_v3` supports English, Hindi, and Telugu without installed operating-system voices. Device speech is an optional English-only alternative.
 - **Prepare, then listen:** render MP3 audio before starting. Scored playback has no in-app pause, stop, scrub, or replay controls.
 - **Listen and answer:** IELTS-style mode shows one focused question at a time with Previous/Next and an answered-question navigator. Questions follow the latest transcript turn needed to answer them, so the test follows the recording rather than grouping questions randomly by format. Submission stays locked until the recording ends and all questions are complete.
@@ -141,6 +141,8 @@ docs/images/               Real product screenshots
 - The sequential six-format answer flow was exercised with a browser-local QA fixture and real two-part ElevenLabs audio. The perfect-score flow reached 100%, played its synthesized chime without console errors, and displayed the celebration. Sound/effect preferences persisted across reloads.
 - Narrow-screen setup layout was checked at 390px with no horizontal overflow. Device speech did not reliably finish in the test browser; the optional fallback now has a timeout and recommends ElevenLabs.
 - Automated tests cover partial/duplicate ordering, matching, normalized answers, Telugu combining marks, long-script chunking, introductions, duration targets, and chronological assessment order.
+- Real Telugu assessment generation returned all six question formats with no Latin text in choices. Hindi six-format form entry and result grading passed using a local fixture; live Hindi localization correction remains unverified because OpenRouter account credits became unavailable. Automated validation rejects English visible content in Hindi/Telugu assessments.
+- Curated male/female voice defaults and filtered options were verified in the browser; tests cover correcting incompatible stored assignments and refusing a fallback to the wrong style.
 - Real two-minute conversation/assessment generation passed. A live fifteen-minute generation check was not completed: initial output failed length validation and OpenRouter account credits then became unavailable. Longer conversations now use connected generation sections, but that provider path still needs a funded live check.
 
 ## Limits and privacy
@@ -150,7 +152,7 @@ docs/images/               Real product screenshots
 - Pronunciation and voice quality come from the speech provider. Automated checks verify output and playback lifecycle, not human-perceived accent or intelligibility.
 - Prompts go to OpenRouter and the selected model provider. Dialogue goes to ElevenLabs. Saved dialogue and progress remain local; cross-device sync is not implemented.
 - In-app controls enforce one-pass practice. Browser developer tools, operating-system controls, and device failures remain outside that boundary. Interrupted attempts are discarded.
-- Generated assessments are structurally validated, but LLM answers/explanations can still be wrong. Evidence references support review; they are not independent factual verification. Editing dialogue invalidates the old question bank. Open-ended semantic answers are not graded by an LLM. Instructions and feedback are in English.
+- Generated assessments are structurally validated, but LLM answers/explanations can still be wrong. Evidence references support review; they are not independent factual verification. Editing dialogue invalidates the old question bank. Open-ended semantic answers are not graded by an LLM. Questions, answer choices, true/false labels, answer fields, navigation, and answer explanations follow the selected session language. Existing non-English question banks without the current localization metadata are rebuilt before playback.
 - Offline AI generation is not implemented. Audio is temporary for the current session, not permanently archived.
 - XP and streaks support consistency. The app makes no clinical or validated cognitive-improvement claim.
 

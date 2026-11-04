@@ -35,6 +35,9 @@ export async function GET(request: Request) {
         .map((v) => ({
           id: v.voice_id,
           name: v.name,
+          gender: ["female", "male", "neutral"].includes(v.labels?.gender || "")
+            ? v.labels!.gender
+            : "unknown",
           description: [v.labels?.gender, v.labels?.accent]
             .filter(Boolean)
             .join(" · "),

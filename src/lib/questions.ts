@@ -1,4 +1,6 @@
 export type Question = {
+  language?: string;
+  localeVersion?: number;
   kind?: "mcq" | "cloze" | "truefalse" | "matching" | "short" | "ordering";
   prompt: string;
   answer: string;
@@ -48,4 +50,12 @@ export function displayAnswer(q: Question, a: string) {
       .map((v, i) => `${i + 1}. ${v || "Unanswered"}`)
       .join("; ");
   return a;
+}
+
+export function isAssessmentCurrent(questions: Question[], lang: string) {
+  return (
+    questions.length > 0 &&
+    (lang === "en" ||
+      questions.every((q) => q.language === lang && q.localeVersion === 2))
+  );
 }

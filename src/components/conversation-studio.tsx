@@ -20,9 +20,10 @@ export type Draft = {
   speakers: number;
   createdAt: string;
   minutes?: SessionMinutes;
+  voiceStyles?: Record<string, string>;
   questions?: Question[];
   scenario?: string;
-  cast?: { name: string; role: string }[];
+  cast?: { name: string; role: string; voiceStyle?: string }[];
 };
 export function loadDrafts(): Draft[] {
   try {
@@ -81,6 +82,7 @@ export function ConversationStudio({
   onSpeakers,
   onUse,
   onSpeakerNames,
+  onCast,
   ready,
 }: {
   lang: Draft["lang"];
@@ -89,6 +91,7 @@ export function ConversationStudio({
   onSpeakers: (n: number) => void;
   onUse: (d: Omit<Draft, "id" | "createdAt">) => void;
   onSpeakerNames: (names: string[]) => void;
+  onCast: (cast: NonNullable<Draft["cast"]>) => void;
   ready: boolean;
 }) {
   const [prompt, setPrompt] = useState(""),
@@ -103,11 +106,16 @@ export function ConversationStudio({
     [resultMinutes, setResultMinutes] = useState<SessionMinutes>(2),
     [questions, setQuestions] = useState<Question[]>([]),
     [scene, setScene] = useState(""),
-    [cast, setCast] = useState<{ name: string; role: string }[]>([]),
+    [cast, setCast] = useState<
+      { name: string; role: string; voiceStyle?: string }[]
+    >([]),
     [estimate, setEstimate] = useState(0);
   useEffect(() => {
     onSpeakerNames(speakerNamesFromDialogue(dialogue));
   }, [dialogue, onSpeakerNames]);
+  useEffect(() => {
+    onCast(cast);
+  }, [cast, onCast]);
   async function generate() {
     setBusy(true);
     setError("");

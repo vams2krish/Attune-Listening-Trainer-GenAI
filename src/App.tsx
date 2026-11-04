@@ -24,7 +24,12 @@ import {
   type Draft,
 } from "./components/conversation-studio";
 type Lang = "en" | "te" | "hi";
-import { gradeAnswer, isAnswered, type Question } from "./lib/questions";
+import {
+  gradeAnswer,
+  isAnswered,
+  isAssessmentCurrent,
+  type Question,
+} from "./lib/questions";
 import { AnswerSheet } from "./components/answer-sheet";
 import {
   ResultCelebration,
@@ -52,7 +57,7 @@ type Session = {
   speed: number;
   lang: Lang;
   scenario?: string;
-  cast?: { name: string; role: string }[];
+  cast?: { name: string; role: string; voiceStyle?: string }[];
   durationSeconds?: number;
   answers?: string[];
   score?: number;
@@ -166,7 +171,7 @@ export default function App() {
     }),
     [speechProvider, setSpeechProvider] = useState("elevenlabs"),
     [cloudVoices, setCloudVoices] = useState<
-      { id: string; name: string; description: string }[]
+      { id: string; name: string; description: string; gender?: string }[]
     >([]),
     [cloudIds, setCloudIds] = useState<Record<string, string>>({}),
     [customTitle, setCustomTitle] = useState("Your conversation"),
@@ -180,6 +185,12 @@ export default function App() {
   const [testMode, setTestMode] = useState("live");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [generatedNames, setGeneratedNames] = useState<string[]>([]);
+  const [generatedCast, setGeneratedCast] = useState<
+    NonNullable<Draft["cast"]>
+  >([]);
+  const [speakerStyles, setSpeakerStyles] = useState<Record<string, string>>(
+    {},
+  );
   const [soundOn, setSoundOn] = useState(true);
   const [effectsOn, setEffectsOn] = useState(true);
   useEffect(() => {
@@ -205,7 +216,7 @@ export default function App() {
   const [targetMinutes, setTargetMinutes] = useState<SessionMinutes>(2);
   const [customContext, setCustomContext] = useState<{
     scenario?: string;
-    cast?: { name: string; role: string }[];
+    cast?: { name: string; role: string; voiceStyle?: string }[];
   }>({});
   const [bank, setBank] = useState<{
     key: string;
@@ -218,7 +229,7 @@ export default function App() {
     lines.map(([n, t]) => `${n}: ${t}`).join("\n");
   async function ensureAssessment(s: Session) {
     const key = dialogueKey(s.lines);
-    if (s.questions.length)
+    if (isAssessmentCurrent(s.questions, s.lang))
       return { ...s, questions: orderQuestions(s.questions) };
     setPrepareStatus("Building content-based test questions…");
     const r = await fetch("/api/questions", {
@@ -263,7 +274,12 @@ export default function App() {
       .then(async (r) => {
         const d = (await r.json()) as {
           error?: string;
-          voices: { id: string; name: string; description: string }[];
+          voices: {
+            id: string;
+            name: string;
+            description: string;
+            gender?: string;
+          }[];
         };
         if (!r.ok) throw Error(d.error);
         setCloudVoices(d.voices);
@@ -279,14 +295,24 @@ export default function App() {
       URL.revokeObjectURL(part.url);
     audioCache.current.clear();
     setPrepared(null);
-  }, [custom, source, lang, scenario, count, cloudIds, speechProvider]);
+  }, [
+    custom,
+    source,
+    lang,
+    scenario,
+    count,
+    cloudIds,
+    speakerStyles,
+    speechProvider,
+  ]);
   function useConversation(d: Omit<Draft, "id" | "createdAt">) {
+    setSpeakerStyles(d.voiceStyles || {});
     setCustom(d.dialogue);
     setCustomTitle(d.title);
     setTargetMinutes(d.minutes || 2);
     setCustomContext({ scenario: d.scenario, cast: d.cast });
     setBank(
-      d.questions?.length
+      d.questions && isAssessmentCurrent(d.questions, d.lang)
         ? {
             key: dialogueKey(parseDialogue(d.dialogue)),
             lang: d.lang,
@@ -313,6 +339,7 @@ export default function App() {
           dialogue: custom,
           lang,
           speakers: count,
+          voiceStyles: speakerStyles,
           minutes: targetMinutes,
           scenario: customContext.scenario,
           cast: customContext.cast,
@@ -336,6 +363,7 @@ export default function App() {
     targetMinutes,
     customContext,
     bank,
+    speakerStyles,
   ]);
   function saveWritten() {
     try {
@@ -345,6 +373,7 @@ export default function App() {
         dialogue: custom,
         lang,
         speakers: count,
+        voiceStyles: speakerStyles,
         minutes: targetMinutes,
         scenario: customContext.scenario,
         cast: customContext.cast,
@@ -369,12 +398,23 @@ export default function App() {
     setAudioBusy(true);
     setError("");
     try {
-      let s = await ensureAssessment(prepare());
+      let s = prepare();
+      if (speechProvider === "elevenlabs") {
+        const missing = s.speakers.filter((name) => !preferredStyles[name]);
+        if (missing.length) {
+          setSettingsOpen(true);
+          throw Error(
+            `Choose a voice style for ${missing.join(", ")} in Settings. This avoids guessing from names.`,
+          );
+        }
+      }
+      s = await ensureAssessment(s);
       saveDraft({
         title: s.title,
         dialogue: dialogueKey(s.lines),
         lang: s.lang,
         speakers: s.speakers.length,
+        voiceStyles: preferredStyles,
         minutes: targetMinutes,
         scenario: s.scenario,
         cast: s.cast,
@@ -389,6 +429,8 @@ export default function App() {
         s.speakers,
         cloudVoices.map((v) => v.id),
         cloudIds,
+        effectiveStyles,
+        providerStyles,
       );
       const ids = s.speakers.map((name) => assigned[name]);
       if (ids.some((id) => !id) || new Set(ids).size !== s.speakers.length)
@@ -498,10 +540,27 @@ export default function App() {
               ),
             ),
           ];
+  const castStyles = Object.fromEntries(
+    (source === "generate" ? generatedCast : customContext.cast || []).map(
+      (c) => [c.name, c.voiceStyle || ""],
+    ),
+  );
+  const preferredStyles: Record<string, string> =
+    source === "curated"
+      ? { Maya: "female", Arjun: "male", Leah: "female", ...speakerStyles }
+      : { ...castStyles, ...speakerStyles };
+  const effectiveStyles = Object.fromEntries(
+    speakerNames.map((name) => [name, preferredStyles[name] || "unselected"]),
+  );
+  const providerStyles = Object.fromEntries(
+    cloudVoices.map((v) => [v.id, v.gender || "unknown"]),
+  );
   const cloudVoiceAssignments = resolveSpeakerVoices(
     speakerNames,
     cloudVoices.map((v) => v.id),
     cloudIds,
+    effectiveStyles,
+    providerStyles,
   );
   const deviceVoiceAssignments = resolveSpeakerVoices(
     speakerNames,
@@ -510,17 +569,25 @@ export default function App() {
   );
   const speakerKey = JSON.stringify(speakerNames);
   const cloudVoiceKey = JSON.stringify(cloudVoices.map((v) => v.id));
+  const styleKey = JSON.stringify(effectiveStyles);
+  const providerStyleKey = JSON.stringify(providerStyles);
   const deviceVoiceKey = JSON.stringify(matching.map((v) => v.voiceURI));
   useEffect(() => {
     const names: string[] = JSON.parse(speakerKey),
       available: string[] = JSON.parse(cloudVoiceKey);
     setCloudIds((old) => {
-      const resolved = resolveSpeakerVoices(names, available, old);
+      const resolved = resolveSpeakerVoices(
+        names,
+        available,
+        old,
+        JSON.parse(styleKey),
+        JSON.parse(providerStyleKey),
+      );
       return names.every((name) => old[name] === resolved[name])
         ? old
         : { ...old, ...resolved };
     });
-  }, [speakerKey, cloudVoiceKey]);
+  }, [speakerKey, cloudVoiceKey, styleKey, providerStyleKey]);
   useEffect(() => {
     const names: string[] = JSON.parse(speakerKey),
       available: string[] = JSON.parse(deviceVoiceKey);
@@ -566,7 +633,12 @@ export default function App() {
             : "The weekend plan",
       lines,
       speakers,
-      questions: bank?.key === key && bank.lang === lang ? bank.questions : [],
+      questions:
+        bank?.key === key &&
+        bank.lang === lang &&
+        isAssessmentCurrent(bank.questions, lang)
+          ? bank.questions
+          : [],
       scenario: scenarioBrief,
       cast: source === "custom" ? customContext.cast : undefined,
       speed,
@@ -822,6 +894,7 @@ export default function App() {
                         onSpeakers={setCount}
                         onUse={useConversation}
                         onSpeakerNames={setGeneratedNames}
+                        onCast={setGeneratedCast}
                         ready={capabilities.generation}
                       />
                     ) : source === "curated" ? (
@@ -1090,7 +1163,7 @@ export default function App() {
                           )}
                           {speakerNames.map((name, i) => (
                             <div
-                              className="flex gap-3 items-center"
+                              className="grid grid-cols-[auto_1fr] sm:grid-cols-[32px_96px_130px_minmax(0,1fr)] gap-3 items-center"
                               key={`${lang}-${name}`}
                             >
                               <div className="size-8 rounded-full border border-border flex items-center justify-center text-[11px] text-zinc-500 shrink-0">
@@ -1102,6 +1175,23 @@ export default function App() {
                               >
                                 {name}
                               </label>
+                              <select
+                                aria-label={`Voice style for ${name}`}
+                                value={preferredStyles[name] || ""}
+                                onChange={(e) =>
+                                  setSpeakerStyles((old) => ({
+                                    ...old,
+                                    [name]: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="" disabled>
+                                  Choose style
+                                </option>
+                                <option value="female">Female voice</option>
+                                <option value="male">Male voice</option>
+                                <option value="neutral">Neutral voice</option>
+                              </select>
                               <select
                                 id={`voice${i}`}
                                 aria-label={`Voice for ${name}`}
@@ -1122,16 +1212,27 @@ export default function App() {
                                     });
                                 }}
                               >
+                                {speechProvider === "elevenlabs" &&
+                                  !preferredStyles[name] && (
+                                    <option value="">
+                                      Choose voice style first
+                                    </option>
+                                  )}
                                 {speechProvider === "elevenlabs" ? (
                                   cloudVoices.length ? (
-                                    cloudVoices.map((v) => (
-                                      <option key={v.id} value={v.id}>
-                                        {v.name}
-                                        {v.description
-                                          ? ` · ${v.description}`
-                                          : ""}
-                                      </option>
-                                    ))
+                                    cloudVoices
+                                      .filter(
+                                        (v) =>
+                                          v.gender === preferredStyles[name],
+                                      )
+                                      .map((v) => (
+                                        <option key={v.id} value={v.id}>
+                                          {v.name}
+                                          {v.description
+                                            ? ` · ${v.description}`
+                                            : ""}
+                                        </option>
+                                      ))
                                   ) : (
                                     <option value="">Loading voices…</option>
                                   )
@@ -1332,6 +1433,7 @@ export default function App() {
                   }
                   onSubmit={submit}
                   listening={phase === "listening"}
+                  lang={session.lang}
                 />
               </>
             )}
@@ -1387,6 +1489,7 @@ export default function App() {
                     question={q}
                     answer={session.answers![i]}
                     index={i}
+                    lang={session.lang}
                   />
                 ))}
                 <Card className="p-6">

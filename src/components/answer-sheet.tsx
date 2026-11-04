@@ -1,4 +1,5 @@
 "use client";
+import { assessmentText } from "../lib/assessment-copy";
 import { useState } from "react";
 import { AudioLines, ArrowRight, ArrowLeft, Check } from "lucide-react";
 import { Button } from "./ui/button";
@@ -10,13 +11,16 @@ export function AnswerSheet({
   onChange,
   onSubmit,
   listening,
+  lang = "en",
 }: {
   questions: Question[];
   answers: string[];
   onChange: (i: number, a: string) => void;
   onSubmit: () => void;
   listening: boolean;
+  lang?: string;
 }) {
+  const t = assessmentText(lang);
   const [active, setActive] = useState(0);
   const typeLabels = {
     mcq: "Multiple choice",
@@ -53,13 +57,13 @@ export function AnswerSheet({
           <div>
             <p className="text-xs font-medium">
               {listening
-                ? "Listening · one pass"
-                : "Audio finished · review your answers"}
+                ? t("Listening \u00b7 one pass")
+                : t("Audio finished \u00b7 review your answers")}
             </p>
             <p className="text-[11px] text-muted-foreground mt-1">
               {listening
-                ? "Answer as the conversation unfolds. No pause or replay."
-                : "Complete every question before submitting."}
+                ? t("Answer as the conversation unfolds. No pause or replay.")
+                : t("Complete every question before submitting.")}
             </p>
           </div>
         </div>
@@ -68,18 +72,19 @@ export function AnswerSheet({
         </span>
       </div>
       <p className="text-xs text-muted-foreground mb-4">
-        Questions follow the conversation in order. Move to the next question as
-        you hear each detail.
+        {t(
+          "Questions follow the conversation in order. Move to the next question as you hear each detail.",
+        )}
       </p>
       <nav
-        aria-label="Question navigation"
+        aria-label={t("Question navigation")}
         className="flex flex-wrap gap-2 mb-5"
       >
         {questions.map((q, i) => (
           <button
             type="button"
             key={i}
-            aria-label={`Question ${i + 1}${isAnswered(q, answers[i]) ? ", answered" : ""}`}
+            aria-label={`${t("Question")} ${i + 1}${isAnswered(q, answers[i]) ? ", " + t("answered") : ""}`}
             aria-current={active === i ? "step" : undefined}
             onClick={() => setActive(i)}
             className={`question-step size-9 rounded-md border text-xs flex items-center justify-center gap-1 ${active === i ? "bg-zinc-900 text-white border-zinc-900" : "border-border bg-white"}`}
@@ -102,7 +107,7 @@ export function AnswerSheet({
               <Card key={i} className="p-6 question-enter">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-3">
                   {i + 1} / {questions.length} <span className="mx-2">·</span>
-                  {q.kind ? typeLabels[q.kind] : q.category}
+                  {q.kind ? t(typeLabels[q.kind]) : q.category}
                 </p>
                 <h2 className="text-sm font-medium leading-6">{q.prompt}</h2>
                 {q.kind === "matching" || q.kind === "ordering" ? (
@@ -115,7 +120,7 @@ export function AnswerSheet({
                         >
                           {q.kind === "matching"
                             ? `${j + 1}. ${item.label}`
-                            : `Position ${j + 1}`}
+                            : `${t("Position")} ${j + 1}`}
                         </label>
                         <select
                           required
@@ -124,7 +129,7 @@ export function AnswerSheet({
                           onChange={(e) => setPart(i, j, e.target.value)}
                         >
                           <option value="" disabled>
-                            Select an answer
+                            {t("Select an answer")}
                           </option>
                           {q.kind === "matching"
                             ? q.options!.map((o) => (
@@ -144,7 +149,7 @@ export function AnswerSheet({
                       answers[i] &&
                       !isAnswered(q, answers[i]) && (
                         <p className="text-[11px] text-muted-foreground">
-                          Use each event once.
+                          {t("Use each event once.")}
                         </p>
                       )}
                   </div>
@@ -170,7 +175,9 @@ export function AnswerSheet({
                 ) : (
                   <div className="mt-4">
                     <label className="field" htmlFor={`answer${i}`}>
-                      {q.kind === "cloze" ? "Missing word" : "Your answer"}
+                      {q.kind === "cloze"
+                        ? t("Missing word")
+                        : t("Your answer")}
                     </label>
                     <input
                       id={`answer${i}`}
@@ -193,28 +200,30 @@ export function AnswerSheet({
             onClick={() => setActive((a) => a - 1)}
           >
             <ArrowLeft />
-            Previous
+            {t("Previous")}
           </Button>
           <span className="text-xs text-muted-foreground">
-            Question {active + 1} of {questions.length}
+            {t("Question")} {active + 1} / {questions.length}
           </span>
           {active < questions.length - 1 && (
             <Button type="button" onClick={() => setActive((a) => a + 1)}>
-              Next question
+              {t("Next question")}
               <ArrowRight />
             </Button>
           )}
         </div>
         <div className="flex items-center justify-between pt-3 gap-3">
           <span className="text-xs text-muted-foreground">
-            {completed} of {questions.length} answered
+            {completed}/{questions.length} {t("answered count")}
           </span>
           {active === questions.length - 1 && (
             <Button
               type="submit"
               disabled={listening || completed < questions.length}
             >
-              {listening ? "Finish listening to submit" : "Submit all answers"}
+              {listening
+                ? t("Finish listening to submit")
+                : t("Submit all answers")}
               <ArrowRight />
             </Button>
           )}

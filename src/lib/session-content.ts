@@ -105,18 +105,31 @@ export function resolveSpeakerVoices(
   names: string[],
   available: string[],
   assignments: Record<string, string>,
+  styles: Record<string, string> = {},
+  voiceStyles: Record<string, string> = {},
 ): Record<string, string> {
+  const compatible = (name: string, id: string) =>
+    !styles[name] || voiceStyles[id] === styles[name];
   const resolved: Record<string, string> = {};
   const used = new Set(
     names
       .map((name) => assignments[name])
-      .filter((id) => available.includes(id)),
+      .filter(
+        (id) =>
+          available.includes(id) &&
+          names.some(
+            (name) => assignments[name] === id && compatible(name, id),
+          ),
+      ),
   );
   for (const name of names) {
     const chosen = assignments[name];
-    if (chosen && available.includes(chosen)) resolved[name] = chosen;
+    if (chosen && available.includes(chosen) && compatible(name, chosen))
+      resolved[name] = chosen;
     else {
-      const next = available.find((id) => !used.has(id));
+      const next = available.find(
+        (id) => !used.has(id) && compatible(name, id),
+      );
       if (next) {
         resolved[name] = next;
         used.add(next);
