@@ -16,6 +16,7 @@ Attune is a multilingual listening-practice app for auditory attention, speaker 
 - **Write or paste text:** enter a title and `Speaker: dialogue` turns or import a `.txt` file.
 - **Automatic Library:** generated conversations save immediately; valid written/imported edits save after a short debounce. Prepared curated conversations are saved too. Saved conversations stay on this device.
 - **One setup panel:** conversation, session summary, and start action share one surface. Optional Settings reveal practice mode, language, speed, speech provider, voices, sounds, and visual effects.
+- **Named voice assignments:** all 2–6 names come from the actual dialogue, including the generated preview. Voice choices are bound to names and remain attached when turns are reordered; each speaker receives a distinct available default voice.
 - **Multilingual speech:** assign distinct ElevenLabs voices. `eleven_v3` supports English, Hindi, and Telugu without installed operating-system voices. Device speech is an optional English-only alternative.
 - **Prepare, then listen:** render MP3 audio before starting. Scored playback has no in-app pause, stop, scrub, or replay controls.
 - **Listen and answer:** IELTS-style mode shows one focused question at a time with Previous/Next and an answered-question navigator. Questions follow the latest transcript turn needed to answer them, so the test follows the recording rather than grouping questions randomly by format. Submission stays locked until the recording ends and all questions are complete.

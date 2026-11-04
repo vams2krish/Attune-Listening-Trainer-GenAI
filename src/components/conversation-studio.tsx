@@ -6,6 +6,7 @@ import { Card } from "./ui/card";
 import type { Question } from "../lib/questions";
 import {
   parseDialogue,
+  speakerNamesFromDialogue,
   SESSION_MINUTES,
   formatDuration,
   type SessionMinutes,
@@ -79,6 +80,7 @@ export function ConversationStudio({
   onLanguage,
   onSpeakers,
   onUse,
+  onSpeakerNames,
   ready,
 }: {
   lang: Draft["lang"];
@@ -86,6 +88,7 @@ export function ConversationStudio({
   onLanguage: (l: Draft["lang"]) => void;
   onSpeakers: (n: number) => void;
   onUse: (d: Omit<Draft, "id" | "createdAt">) => void;
+  onSpeakerNames: (names: string[]) => void;
   ready: boolean;
 }) {
   const [prompt, setPrompt] = useState(""),
@@ -102,6 +105,9 @@ export function ConversationStudio({
     [scene, setScene] = useState(""),
     [cast, setCast] = useState<{ name: string; role: string }[]>([]),
     [estimate, setEstimate] = useState(0);
+  useEffect(() => {
+    onSpeakerNames(speakerNamesFromDialogue(dialogue));
+  }, [dialogue, onSpeakerNames]);
   async function generate() {
     setBusy(true);
     setError("");

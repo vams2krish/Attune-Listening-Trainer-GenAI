@@ -18,3 +18,16 @@ test('questions follow the point where all required evidence has been heard', as
  assert.deepEqual(orderQuestions(questions).map(q=>q.prompt),['Earlier detail','Change of plan','Final inference']);
  assert.equal(questions[0].prompt,'Final inference');
 });
+
+test('all six dialogue names receive distinct voices and keep explicit bindings after reordering', async () => {
+ const {speakerNamesFromDialogue,resolveSpeakerVoices}=await import('../src/lib/session-content.ts');
+ const names=speakerNamesFromDialogue('Asha: Hello\nRavi: Hi\nMeera: Welcome\nKabir: Thanks\nNila: Good morning\nDev: Ready\nAsha: Let us begin');
+ assert.deepEqual(names,['Asha','Ravi','Meera','Kabir','Nila','Dev']);
+ const available=['v1','v2','v3','v4','v5','v6'];
+ const assigned=resolveSpeakerVoices(names,available,{Dev:'v2',Asha:'v6'});
+ assert.equal(new Set(Object.values(assigned)).size,6);
+ assert.equal(assigned.Dev,'v2');assert.equal(assigned.Asha,'v6');
+ const reordered=resolveSpeakerVoices([...names].reverse(),available,assigned);
+ for(const name of names)assert.equal(reordered[name],assigned[name]);
+ assert.deepEqual(speakerNamesFromDialogue('Incomplete line\n  : text\nRavi: Hello'),['Ravi']);
+});

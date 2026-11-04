@@ -89,3 +89,39 @@ export function formatDuration(seconds: number) {
   const whole = Math.round(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
+
+export function speakerNamesFromDialogue(dialogue: string): string[] {
+  return [
+    ...new Set(
+      dialogue.split(/\r?\n/).flatMap((line) => {
+        const colon = line.indexOf(":");
+        const name = colon > 0 ? line.slice(0, colon).trim() : "";
+        return name ? [name] : [];
+      }),
+    ),
+  ];
+}
+export function resolveSpeakerVoices(
+  names: string[],
+  available: string[],
+  assignments: Record<string, string>,
+): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  const used = new Set(
+    names
+      .map((name) => assignments[name])
+      .filter((id) => available.includes(id)),
+  );
+  for (const name of names) {
+    const chosen = assignments[name];
+    if (chosen && available.includes(chosen)) resolved[name] = chosen;
+    else {
+      const next = available.find((id) => !used.has(id));
+      if (next) {
+        resolved[name] = next;
+        used.add(next);
+      }
+    }
+  }
+  return resolved;
+}

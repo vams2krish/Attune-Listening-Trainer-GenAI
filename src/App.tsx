@@ -35,6 +35,8 @@ import { ResultQuestion } from "./components/result-question";
 import { QuestionPreview } from "./components/question-preview";
 import {
   parseDialogue,
+  speakerNamesFromDialogue,
+  resolveSpeakerVoices,
   introduceSpeakers,
   chunkSpeech,
   formatDuration,
@@ -152,7 +154,7 @@ export default function App() {
     [speed, setSpeed] = useState(1),
     [custom, setCustom] = useState(""),
     [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]),
-    [voiceIds, setVoiceIds] = useState<string[]>([]),
+    [voiceIds, setVoiceIds] = useState<Record<string, string>>({}),
     [error, setError] = useState(""),
     [session, setSession] = useState<Session | null>(null),
     [answers, setAnswers] = useState<string[]>([]),
@@ -166,7 +168,7 @@ export default function App() {
     [cloudVoices, setCloudVoices] = useState<
       { id: string; name: string; description: string }[]
     >([]),
-    [cloudIds, setCloudIds] = useState<string[]>([]),
+    [cloudIds, setCloudIds] = useState<Record<string, string>>({}),
     [customTitle, setCustomTitle] = useState("Your conversation"),
     [draftSaved, setDraftSaved] = useState(false),
     [audioBusy, setAudioBusy] = useState(false),
@@ -177,6 +179,7 @@ export default function App() {
     } | null>(null);
   const [testMode, setTestMode] = useState("live");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [generatedNames, setGeneratedNames] = useState<string[]>([]);
   const [soundOn, setSoundOn] = useState(true);
   const [effectsOn, setEffectsOn] = useState(true);
   useEffect(() => {
@@ -382,7 +385,12 @@ export default function App() {
         await startBrowser(s);
         return;
       }
-      const ids = s.speakers.map((_, i) => cloudIds[i] || cloudVoices[i]?.id);
+      const assigned = resolveSpeakerVoices(
+        s.speakers,
+        cloudVoices.map((v) => v.id),
+        cloudIds,
+      );
+      const ids = s.speakers.map((name) => assigned[name]);
       if (ids.some((id) => !id) || new Set(ids).size !== s.speakers.length)
         throw Error("Choose a different ElevenLabs voice for every speaker.");
       const fingerprint = JSON.stringify({ lines: s.lines, lang: s.lang, ids });
@@ -480,15 +488,49 @@ export default function App() {
   const selected = scenarios.find((s) => s.id === scenario)!;
   const speakerNames =
     source === "custom"
-      ? [
-          ...new Set(
-            custom
-              .split(/\r?\n/)
-              .filter((l) => l.includes(":"))
-              .map((l) => l.slice(0, l.indexOf(":")).trim()),
-          ),
-        ]
-      : ["Maya", "Arjun", "Leah"];
+      ? speakerNamesFromDialogue(custom)
+      : source === "generate"
+        ? generatedNames
+        : [
+            ...new Set(
+              (lang === "en" ? selected.lines : translations[lang]).map(
+                (line) => line[0],
+              ),
+            ),
+          ];
+  const cloudVoiceAssignments = resolveSpeakerVoices(
+    speakerNames,
+    cloudVoices.map((v) => v.id),
+    cloudIds,
+  );
+  const deviceVoiceAssignments = resolveSpeakerVoices(
+    speakerNames,
+    matching.map((v) => v.voiceURI),
+    voiceIds,
+  );
+  const speakerKey = JSON.stringify(speakerNames);
+  const cloudVoiceKey = JSON.stringify(cloudVoices.map((v) => v.id));
+  const deviceVoiceKey = JSON.stringify(matching.map((v) => v.voiceURI));
+  useEffect(() => {
+    const names: string[] = JSON.parse(speakerKey),
+      available: string[] = JSON.parse(cloudVoiceKey);
+    setCloudIds((old) => {
+      const resolved = resolveSpeakerVoices(names, available, old);
+      return names.every((name) => old[name] === resolved[name])
+        ? old
+        : { ...old, ...resolved };
+    });
+  }, [speakerKey, cloudVoiceKey]);
+  useEffect(() => {
+    const names: string[] = JSON.parse(speakerKey),
+      available: string[] = JSON.parse(deviceVoiceKey);
+    setVoiceIds((old) => {
+      const resolved = resolveSpeakerVoices(names, available, old);
+      return names.every((name) => old[name] === resolved[name])
+        ? old
+        : { ...old, ...resolved };
+    });
+  }, [speakerKey, deviceVoiceKey]);
   function go(v: string) {
     if (phase !== "setup" || audioBusy) return;
     setView(v);
@@ -536,9 +578,14 @@ export default function App() {
     try {
       if (!window.speechSynthesis || !matching.length)
         throw Error("Choose ElevenLabs for reliable multilingual speech.");
+      const byName = resolveSpeakerVoices(
+        s.speakers,
+        matching.map((v) => v.voiceURI),
+        voiceIds,
+      );
       const assignments = s.speakers.map(
-        (_, i) =>
-          matching.find((v) => v.voiceURI === voiceIds[i]) ||
+        (name, i) =>
+          matching.find((v) => v.voiceURI === byName[name]) ||
           matching[i % matching.length],
       );
       running.current = true;
@@ -555,9 +602,30 @@ export default function App() {
           u.lang = assignments[i].lang;
           u.rate = s.speed;
           u.pitch = [1.15, 0.75, 1.45, 0.9, 1.3, 0.65][i];
-          const timeout = window.setTimeout(() => reject(Error("Device speech did not finish. Choose ElevenLabs in Settings for reliable playback.")), Math.max(20000, text.split(/\s+/).length / (2 * s.speed) * 1000 + 15000));
-          u.onend = () => { clearTimeout(timeout); resolve(); };
-          u.onerror = () => { clearTimeout(timeout); reject(Error("Audio was interrupted. This attempt was discarded. Choose ElevenLabs in Settings or check your output device.")); };
+          const timeout = window.setTimeout(
+            () =>
+              reject(
+                Error(
+                  "Device speech did not finish. Choose ElevenLabs in Settings for reliable playback.",
+                ),
+              ),
+            Math.max(
+              20000,
+              (text.split(/\s+/).length / (2 * s.speed)) * 1000 + 15000,
+            ),
+          );
+          u.onend = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+          u.onerror = () => {
+            clearTimeout(timeout);
+            reject(
+              Error(
+                "Audio was interrupted. This attempt was discarded. Choose ElevenLabs in Settings or check your output device.",
+              ),
+            );
+          };
           speechSynthesis.speak(u);
         });
       }
@@ -753,6 +821,7 @@ export default function App() {
                         onLanguage={setLang}
                         onSpeakers={setCount}
                         onUse={useConversation}
+                        onSpeakerNames={setGeneratedNames}
                         ready={capabilities.generation}
                       />
                     ) : source === "curated" ? (
@@ -919,7 +988,7 @@ export default function App() {
                               value={lang}
                               onChange={(e) => {
                                 setLang(e.target.value as Lang);
-                                setVoiceIds([]);
+                                setVoiceIds({});
                                 if (e.target.value !== "en")
                                   setSpeechProvider("elevenlabs");
                               }}
@@ -1013,43 +1082,43 @@ export default function App() {
                           </span>
                         </div>
                         <div className="space-y-3">
-                          {Array.from({ length: count }, (_, i) => (
+                          {!speakerNames.length && (
+                            <p className="text-xs text-muted-foreground">
+                              Generate or write your conversation first. Each
+                              speaker’s name will appear here with their voice.
+                            </p>
+                          )}
+                          {speakerNames.map((name, i) => (
                             <div
                               className="flex gap-3 items-center"
-                              key={`${lang}-${i}`}
+                              key={`${lang}-${name}`}
                             >
                               <div className="size-8 rounded-full border border-border flex items-center justify-center text-[11px] text-zinc-500 shrink-0">
                                 {String(i + 1).padStart(2, "0")}
                               </div>
                               <label
                                 htmlFor={`voice${i}`}
-                                className="text-xs w-16 shrink-0 truncate"
+                                className="text-xs w-24 shrink-0 break-words"
                               >
-                                {speakerNames[i] || `Speaker ${i + 1}`}
+                                {name}
                               </label>
                               <select
                                 id={`voice${i}`}
-                                aria-label={`Voice for ${speakerNames[i] || `speaker ${i + 1}`}`}
+                                aria-label={`Voice for ${name}`}
                                 value={
                                   speechProvider === "elevenlabs"
-                                    ? cloudIds[i] || cloudVoices[i]?.id || ""
-                                    : voiceIds[i] ||
-                                      matching[i % matching.length]?.voiceURI ||
-                                      ""
+                                    ? cloudVoiceAssignments[name] || ""
+                                    : deviceVoiceAssignments[name] || ""
                                 }
                                 onChange={(e) => {
                                   const value = e.target.value;
                                   if (speechProvider === "elevenlabs")
                                     setCloudIds((old) => {
-                                      const next = [...old];
-                                      next[i] = value;
-                                      return next;
+                                      return { ...old, [name]: value };
                                     });
                                   else
                                     setVoiceIds((old) => {
-                                      const next = [...old];
-                                      next[i] = value;
-                                      return next;
+                                      return { ...old, [name]: value };
                                     });
                                 }}
                               >
