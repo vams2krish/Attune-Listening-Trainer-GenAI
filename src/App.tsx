@@ -164,6 +164,9 @@ export default function App() {
   const [testMode, setTestMode] = useState("live");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
+    if (lang !== "en") setSpeechProvider("elevenlabs");
+  }, [lang]);
+  useEffect(() => {
     setHistory(loadHistory());
     fetch("/api/status")
       .then((r) =>
