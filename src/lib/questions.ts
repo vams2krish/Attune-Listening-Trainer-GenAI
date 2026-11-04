@@ -55,7 +55,10 @@ export function displayAnswer(q: Question, a: string) {
 export function isAssessmentCurrent(questions: Question[], lang: string) {
   return (
     questions.length > 0 &&
-    (lang === "en" ||
-      questions.every((q) => q.language === lang && q.localeVersion === 2))
+    questions.every(
+      (q) =>
+        (lang === "en" && q.language === undefined) ||
+        (q.language === lang && q.localeVersion === 2),
+    )
   );
 }

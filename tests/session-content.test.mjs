@@ -56,3 +56,12 @@ test('Telugu and Hindi assessments localize every option and invalidate legacy E
   assert.throws(()=>validateAssessment(localized.map((q,i)=>i?q:{...q,options:['English',...q.options.slice(1)]}),lines,6,lang),/selected language/);
  }
 });
+
+
+test('switching from a localized bank back to English never reuses the other language', async () => {
+ const {isAssessmentCurrent}=await import('../src/lib/questions.ts');
+ assert.equal(isAssessmentCurrent([{...base,language:'te',localeVersion:2}],'en'),false);
+ assert.equal(isAssessmentCurrent([{...base,language:'hi',localeVersion:2}],'en'),false);
+ assert.equal(isAssessmentCurrent([base],'en'),true);
+ assert.equal(isAssessmentCurrent([{...base,language:'en',localeVersion:2}],'en'),true);
+});

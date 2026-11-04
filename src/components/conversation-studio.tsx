@@ -22,6 +22,8 @@ export type Draft = {
   createdAt: string;
   minutes?: SessionMinutes;
   voiceStyles?: Record<string, string>;
+  voiceAssignments?: Record<string, string>;
+  deviceVoiceAssignments?: Record<string, string>;
   questions?: Question[];
   scenario?: string;
   cast?: { name: string; role: string; voiceStyle?: string }[];
@@ -160,7 +162,7 @@ export function ConversationStudio({
   }
   useEffect(() => {
     if (!dialogue.trim()) return;
-    const timer = window.setTimeout(() => {
+    const persist = () => {
       try {
         if (
           new Set(parseDialogue(dialogue).map((l) => l[0])).size !==
@@ -185,8 +187,13 @@ export function ConversationStudio({
       } catch {
         setError("Automatic saving is unavailable. Check browser storage.");
       }
-    }, 900);
-    return () => clearTimeout(timer);
+    };
+    const timer = window.setTimeout(persist, 900);
+    window.addEventListener("pagehide", persist);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", persist);
+    };
   }, [
     title,
     dialogue,
@@ -199,6 +206,9 @@ export function ConversationStudio({
   ]);
   function save() {
     try {
+      const lines = parseDialogue(dialogue);
+      if (new Set(lines.map((l) => l[0])).size !== resultSpeakers)
+        throw Error("Make the speaker count match the dialogue before saving.");
       saveDraft({
         title: title.trim() || "Generated conversation",
         dialogue,
@@ -211,9 +221,11 @@ export function ConversationStudio({
       });
       setSaved(true);
       setError("");
-    } catch {
+    } catch (e) {
       setError(
-        "Could not save this conversation. Check browser storage and try again.",
+        e instanceof Error
+          ? e.message
+          : "Could not save this conversation. Check browser storage and try again.",
       );
     }
   }
@@ -372,6 +384,7 @@ export function ConversationStudio({
           <input
             type="text"
             id="generated-title"
+            onBlur={save}
             maxLength={140}
             value={title}
             onChange={(e) => {
@@ -384,6 +397,7 @@ export function ConversationStudio({
           </label>
           <textarea
             id="generated-dialogue"
+            onBlur={save}
             className="min-h-64"
             value={dialogue}
             onChange={(e) => {

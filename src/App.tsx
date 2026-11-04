@@ -308,6 +308,8 @@ export default function App() {
   ]);
   function useConversation(d: Omit<Draft, "id" | "createdAt">) {
     setSpeakerStyles(d.voiceStyles || {});
+    setCloudIds(d.voiceAssignments || {});
+    setVoiceIds(d.deviceVoiceAssignments || {});
     setCustom(d.dialogue);
     setCustomTitle(d.title);
     setTargetMinutes(d.minutes || 2);
@@ -331,7 +333,7 @@ export default function App() {
   }
   useEffect(() => {
     if (source !== "custom" || !custom.trim()) return;
-    const timer = window.setTimeout(() => {
+    const persist = () => {
       try {
         const lines = parseDialogue(custom);
         if (new Set(lines.map((l) => l[0])).size !== count) return;
@@ -341,6 +343,8 @@ export default function App() {
           lang,
           speakers: count,
           voiceStyles: speakerStyles,
+          voiceAssignments: cloudIds,
+          deviceVoiceAssignments: voiceIds,
           minutes: targetMinutes,
           scenario: customContext.scenario,
           cast: customContext.cast,
@@ -353,8 +357,13 @@ export default function App() {
       } catch {
         setDraftSaved(false);
       }
-    }, 900);
-    return () => clearTimeout(timer);
+    };
+    const timer = window.setTimeout(persist, 900);
+    window.addEventListener("pagehide", persist);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", persist);
+    };
   }, [
     custom,
     customTitle,
@@ -365,6 +374,8 @@ export default function App() {
     customContext,
     bank,
     speakerStyles,
+    cloudIds,
+    voiceIds,
   ]);
   function saveWritten() {
     try {
@@ -375,11 +386,15 @@ export default function App() {
         lang,
         speakers: count,
         voiceStyles: speakerStyles,
+        voiceAssignments: cloudIds,
+        deviceVoiceAssignments: voiceIds,
         minutes: targetMinutes,
         scenario: customContext.scenario,
         cast: customContext.cast,
         questions:
-          bank?.key === dialogueKey(prepare().lines) ? bank.questions : [],
+          bank?.key === dialogueKey(prepare().lines) && bank.lang === lang
+            ? bank.questions
+            : [],
       });
       setDraftSaved(true);
       setError("");
@@ -409,6 +424,19 @@ export default function App() {
           );
         }
       }
+      let ids: string[] = [];
+      if (speechProvider === "elevenlabs") {
+        const assigned = resolveSpeakerVoices(
+          s.speakers,
+          cloudVoices.map((v) => v.id),
+          cloudIds,
+          effectiveStyles,
+          providerStyles,
+        );
+        ids = s.speakers.map((name) => assigned[name]);
+        if (ids.some((id) => !id) || new Set(ids).size !== s.speakers.length)
+          throw Error("Choose a different ElevenLabs voice for every speaker.");
+      }
       s = await ensureAssessment(s);
       saveDraft({
         title: s.title,
@@ -416,6 +444,8 @@ export default function App() {
         lang: s.lang,
         speakers: s.speakers.length,
         voiceStyles: preferredStyles,
+        voiceAssignments: cloudVoiceAssignments,
+        deviceVoiceAssignments,
         minutes: targetMinutes,
         scenario: s.scenario,
         cast: s.cast,
@@ -426,16 +456,6 @@ export default function App() {
         await startBrowser(s);
         return;
       }
-      const assigned = resolveSpeakerVoices(
-        s.speakers,
-        cloudVoices.map((v) => v.id),
-        cloudIds,
-        effectiveStyles,
-        providerStyles,
-      );
-      const ids = s.speakers.map((name) => assigned[name]);
-      if (ids.some((id) => !id) || new Set(ids).size !== s.speakers.length)
-        throw Error("Choose a different ElevenLabs voice for every speaker.");
       const fingerprint = JSON.stringify({ lines: s.lines, lang: s.lang, ids });
       if (!prepared || prepared.fingerprint !== fingerprint) {
         const chunks = chunkSpeech(
@@ -601,8 +621,9 @@ export default function App() {
   }, [speakerKey, deviceVoiceKey]);
   function go(v: string) {
     if (phase !== "setup" || audioBusy) return;
+    if (source === "custom" && custom.trim()) saveWritten();
+    else setError("");
     setView(v);
-    setError("");
   }
   function prepare(): Session {
     const lines =
@@ -886,6 +907,8 @@ export default function App() {
                               : ""
                           }
                           onClick={() => {
+                            if (source === "custom" && custom.trim())
+                              saveWritten();
                             setSource(id);
                             if (id === "curated") setCount(3);
                             setError("");
@@ -943,6 +966,9 @@ export default function App() {
                         <input
                           className="mb-4"
                           id="dialogue-title"
+                          onBlur={() => {
+                            if (custom.trim()) saveWritten();
+                          }}
                           type="text"
                           maxLength={140}
                           value={customTitle}
@@ -959,6 +985,9 @@ export default function App() {
                         </p>
                         <textarea
                           id="dialogue"
+                          onBlur={() => {
+                            if (custom.trim()) saveWritten();
+                          }}
                           value={custom}
                           onChange={(e) => {
                             setCustom(e.target.value);
