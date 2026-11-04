@@ -1,0 +1,16 @@
+node_modules/
+dist/
+outputs/
+*.tsbuildinfo
+
+.env*
+!.env.example
+.dev.vars*
+.wrangler/
+.sites-runtime/
+.vite/
+
+.next/
+.vinext/
+.cache/
+.sites-preview/
