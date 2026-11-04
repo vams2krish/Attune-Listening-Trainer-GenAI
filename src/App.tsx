@@ -30,6 +30,7 @@ import {
   isAssessmentCurrent,
   type Question,
 } from "./lib/questions";
+import { ListeningDoodle, ListeningTrail } from "./components/listening-doodle";
 import { AnswerSheet } from "./components/answer-sheet";
 import {
   ResultCelebration,
@@ -850,15 +851,23 @@ export default function App() {
         <div className="max-w-[1120px] mx-auto px-6 lg:px-12 pt-10 pb-16">
           {phase === "setup" && view === "practice" && (
             <>
-              <div className="flex items-start justify-between">
-                <Heading title="A little more focused.">
-                  Train your attention, one conversation at a time.
-                </Heading>
-                <span className="hidden sm:inline text-xs text-muted-foreground border border-border rounded-md px-3 py-2 bg-white">
-                  {history.length} sessions completed
-                </span>
+              <div className="workspace-welcome">
+                <div>
+                  <span className="welcome-eyebrow">
+                    <span />A small workout for your attention
+                  </span>
+                  <Heading title="A little more focused.">
+                    Train your attention, one conversation at a time.
+                  </Heading>
+                  <span className="session-stamp">
+                    {history.length} sessions completed{" "}
+                    <span aria-hidden="true">↗</span>
+                  </span>
+                </div>
+                <ListeningDoodle />
               </div>
               <Card className="p-6 sm:p-8 setup-surface">
+                <ListeningTrail />
                 <fieldset disabled={audioBusy} className="min-w-0">
                   <Section number="01" title="Conversation">
                     <div className="inline-flex flex-wrap rounded-lg bg-zinc-100 p-1 mb-5 gap-1">
@@ -1512,9 +1521,12 @@ export default function App() {
           )}
           {phase === "setup" && view === "library" && (
             <>
-              <Heading title="Choose a conversation.">
-                Everyday situations. A few details worth catching.
-              </Heading>
+              <div className="workspace-welcome">
+                <Heading title="Choose a conversation.">
+                  Everyday situations. A few details worth catching.
+                </Heading>
+                <ListeningDoodle variant="library" />
+              </div>
               <h2 className="text-sm font-medium mb-4">
                 Your saved conversations
               </h2>
@@ -1557,9 +1569,12 @@ export default function App() {
           )}
           {phase === "setup" && view === "progress" && (
             <>
-              <Heading title="Your practice, over time.">
-                A record of showing up and paying attention.
-              </Heading>
+              <div className="workspace-welcome">
+                <Heading title="Your practice, over time.">
+                  A record of showing up and paying attention.
+                </Heading>
+                <ListeningDoodle variant="progress" />
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                 {[
                   [String(history.length), "Sessions"],

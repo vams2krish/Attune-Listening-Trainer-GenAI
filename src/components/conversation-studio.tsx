@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ArrowRight, LoaderCircle, Save, Sparkles } from "lucide-react";
+import { ArrowRight, LoaderCircle, Save, Sparkles, Dices } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import type { Question } from "../lib/questions";
@@ -11,6 +11,7 @@ import {
   formatDuration,
   type SessionMinutes,
 } from "../lib/session-content";
+import { randomConversationPrompt } from "../lib/random-prompts";
 import { QuestionPreview } from "./question-preview";
 export type Draft = {
   id: string;
@@ -94,6 +95,8 @@ export function ConversationStudio({
   onCast: (cast: NonNullable<Draft["cast"]>) => void;
   ready: boolean;
 }) {
+  const [randomIndex, setRandomIndex] = useState(-1);
+  const [promptNotice, setPromptNotice] = useState("");
   const [prompt, setPrompt] = useState(""),
     [minutes, setMinutes] = useState<SessionMinutes>(2),
     [busy, setBusy] = useState(false),
@@ -216,19 +219,50 @@ export function ConversationStudio({
   }
   return (
     <div>
-      <label className="field" htmlFor="conversation-prompt">
-        Describe the conversation
-      </label>
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+        <label className="text-xs font-medium" htmlFor="conversation-prompt">
+          Describe the conversation
+        </label>
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          disabled={busy}
+          className="random-prompt-button"
+          onClick={() => {
+            const next = randomConversationPrompt(lang, speakers, randomIndex);
+            setPrompt(next.text);
+            setRandomIndex(next.index);
+            setPromptNotice(
+              lang === "te"
+                ? "కొత్త ఆలోచన సిద్ధం. మార్చుకోవచ్చు లేదా సంభాషణ రూపొందించవచ్చు."
+                : lang === "hi"
+                  ? "नया विचार तैयार है। बदलाव करें या बातचीत बनाएँ।"
+                  : "Fresh idea, ready to make your own.",
+            );
+          }}
+        >
+          <Dices />
+          Random prompt
+        </Button>
+      </div>
       <textarea
         id="conversation-prompt"
         maxLength={1200}
         value={prompt}
         disabled={busy}
-        onChange={(e) => setPrompt(e.target.value)}
+        onChange={(e) => {
+          setPrompt(e.target.value);
+          setPromptNotice("");
+        }}
         placeholder="Three friends planning a trip to Hyderabad. They compare train times, agree on a budget, and change the meeting place."
       />
-      <p className="text-[10px] text-muted-foreground mt-2">
-        Choose a situation, topic, and the details you want to practice.
+      <p
+        role="status"
+        className="text-[10px] text-muted-foreground mt-2 min-h-4"
+      >
+        {promptNotice ||
+          "Choose a situation, topic, and the details you want to practice. Random ideas are free to shuffle."}
       </p>
       <div className="grid sm:grid-cols-3 gap-3 mt-5">
         <div>

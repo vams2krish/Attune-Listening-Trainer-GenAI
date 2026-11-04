@@ -12,6 +12,9 @@ Attune is a multilingual listening-practice app for auditory attention, speaker 
 
 ## Features
 
+- **Random prompt:** shuffle editable scenario ideas locally in English, Hindi, or Telugu, using the selected speaker count. Consecutive shuffles avoid repeating the same scenario; no API request or credits are needed until you explicitly generate the conversation.
+- **Playful workspace:** original monochrome SVG listening characters, a three-step practice infographic, paper-like surfaces, and restrained interaction details add depth to setup, Library, and Progress. Decorative artwork stays out of the active test; reduced-motion preferences disable motion.
+
 - **Generate with AI:** describe a real-life situation; choose English, Telugu, or Hindi, 2–6 speakers, and **2, 5, 10, or 15 minute targets**. Each session includes 8, 12, 18, or 24 questions respectively, spanning all six formats.
 - **Write or paste text:** enter a title and `Speaker: dialogue` turns or import a `.txt` file.
 - **Automatic Library:** generated conversations save immediately; valid written/imported edits save after a short debounce. Prepared curated conversations are saved too. Saved conversations stay on this device.
