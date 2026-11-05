@@ -41,6 +41,8 @@ import { ResultQuestion } from "./components/result-question";
 import { QuestionPreview } from "./components/question-preview";
 import {
   parseDialogue,
+  parseConversation,
+  sceneFromDialogue,
   speakerNamesFromDialogue,
   resolveSpeakerVoices,
   introduceSpeakers,
@@ -440,7 +442,7 @@ export default function App() {
       s = await ensureAssessment(s);
       saveDraft({
         title: s.title,
-        dialogue: dialogueKey(s.lines),
+        dialogue: source === "custom" ? custom : dialogueKey(s.lines),
         lang: s.lang,
         speakers: s.speakers.length,
         voiceStyles: preferredStyles,
@@ -626,9 +628,10 @@ export default function App() {
     setView(v);
   }
   function prepare(): Session {
+    const parsed = source === "custom" ? parseConversation(custom) : null;
     const lines =
       source === "custom"
-        ? parseDialogue(custom)
+        ? parsed!.lines
         : lang === "en"
           ? selected.lines
           : translations[lang];
@@ -640,7 +643,7 @@ export default function App() {
     const key = dialogueKey(lines);
     const scenarioBrief =
       source === "custom"
-        ? customContext.scenario || customTitle
+        ? sceneFromDialogue(custom) || customContext.scenario || customTitle
         : lang === "en"
           ? selected.description
           : lang === "te"
@@ -981,7 +984,8 @@ export default function App() {
                           Write your conversation
                         </Label>
                         <p className="text-[11px] text-muted-foreground mb-3">
-                          Use Speaker: dialogue, one turn per line.
+                          You can start with a short scene introduction. Then
+                          use Name: dialogue for each spoken turn.
                         </p>
                         <textarea
                           id="dialogue"
@@ -1393,7 +1397,9 @@ export default function App() {
                       <strong>Scenario and speakers</strong>
                       <p className="text-muted-foreground mt-2">
                         {source === "custom"
-                          ? customContext.scenario || customTitle
+                          ? sceneFromDialogue(custom) ||
+                            customContext.scenario ||
+                            customTitle
                           : lang === "en"
                             ? selected.description
                             : lang === "te"
@@ -1435,6 +1441,14 @@ export default function App() {
                       className="border border-zinc-400 rounded-md p-4 text-xs leading-6 bg-white"
                     >
                       {error}
+                      {error.includes("OpenRouter") && (
+                        <span className="block mt-2 text-muted-foreground">
+                          Pasted text skips conversation generation, but
+                          building its test still uses OpenRouter. A saved
+                          conversation with a compatible test can reuse its
+                          questions. ElevenLabs handles speech separately.
+                        </span>
+                      )}
                     </p>
                   )}
                   <p className="text-[10px] text-zinc-400 px-1 leading-5">

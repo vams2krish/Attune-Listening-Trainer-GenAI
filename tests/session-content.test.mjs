@@ -65,3 +65,27 @@ test('switching from a localized bank back to English never reuses the other lan
  assert.equal(isAssessmentCurrent([base],'en'),true);
  assert.equal(isAssessmentCurrent([{...base,language:'en',localeVersion:2}],'en'),true);
 });
+
+test('the pasted train-platform script accepts its scene intro, wrapper quotes, and Alex:Deal', async () => {
+ const {readFileSync}=await import('node:fs');
+ const {parseConversation,speakerNamesFromDialogue}=await import('../src/lib/session-content.ts');
+ const text=readFileSync(new URL('./fixtures/train-platform.txt',import.meta.url),'utf8');
+ const parsed=parseConversation(text);
+ assert.equal(parsed.lines.length,11);
+ assert.deepEqual(speakerNamesFromDialogue(text),['Alex','Jordan','Sam']);
+ assert.match(parsed.scenario,/empty tracks/);
+ assert.equal(parsed.lines[0][0],'Alex'); assert.match(parsed.lines[0][1],/8:15/);
+ assert.match(parsed.lines[3][1],/\$28/);assert.match(parsed.lines[3][1],/\$41/);
+ assert.match(parsed.lines[9][1],/^Deal\./);
+ assert.equal(parsed.lines[10][1].endsWith('"'),false);
+ assert.deepEqual(parseDialogue(text),parsed.lines);
+ assert.deepEqual(parseDialogue(text+"\n==================="),parsed.lines);
+});
+
+test('scene headers and markdown labels do not create extra speakers; malformed later lines are explained', async () => {
+ const {parseConversation,speakerNamesFromDialogue}=await import('../src/lib/session-content.ts');
+ const text='Scene: Friends meet on a station platform.\n**Alex:** We leave at 8:15.\n**Jordan**: I will buy tickets.\nAlex:Deal.\nJordan：See you there.';
+ assert.equal(parseConversation(text).scenario,'Friends meet on a station platform.');
+ assert.deepEqual(speakerNamesFromDialogue(text),['Alex','Jordan']);
+ assert.throws(()=>parseConversation(text+'\nThis spoken turn has no label.'),/Line 6 needs a speaker label/);
+});

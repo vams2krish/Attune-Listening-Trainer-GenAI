@@ -3,28 +3,73 @@ export type SessionMinutes = (typeof SESSION_MINUTES)[number];
 export type SpeechInput = { text: string; voice_id: string };
 export const questionCount = (minutes: number) =>
   minutes >= 15 ? 24 : minutes >= 10 ? 18 : minutes >= 5 ? 12 : 8;
-export function parseDialogue(dialogue: string) {
-  const lines = dialogue
-    .trim()
-    .split(/\r?\n/)
-    .filter((l) => l.trim())
-    .map((l) => {
-      const i = l.indexOf(":");
-      if (i < 1) throw Error("Use Speaker: dialogue on every line.");
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-    });
+function unwrapPaste(dialogue: string) {
+  let text = dialogue.trim().replace(/\r?\n={3,}\s*$/u, "").trim();
+  if (/^```(?:text|plaintext)?\s*\n/i.test(text) && /\n```$/.test(text))
+    text = text
+      .replace(/^```(?:text|plaintext)?\s*\n/i, "")
+      .replace(/\n```$/, "")
+      .trim();
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("“") && text.endsWith("”"))
+  )
+    text = text.slice(1, -1).trim();
+  return text;
+}
+function speakerTurn(line: string) {
+  const match = line.match(/^\s*(.{1,44}?)[:：]\s*(.*)$/u);
+  if (!match) return null;
+  const name = match[1].replace(/^\*\*|\*\*$/g, "").trim();
+  if (!/^[\p{L}][\p{L}\p{M}\p{N} ._'’\-]{0,39}$/u.test(name)) return null;
+  return [name, match[2].replace(/^\*\*\s*/, "").trim()];
+}
+const sceneLabel =
+  /^(?:scene|scenario|setting|సందర్భం|పరిస్థితి|परिस्थिति|दृश्य)[:：]\s*/iu;
+export function parseConversation(dialogue: string) {
+  const lines: string[][] = [],
+    intro: string[] = [];
+  const rows = unwrapPaste(dialogue).split(/\r?\n/);
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index].trim();
+    if (!row) continue;
+    const turn = speakerTurn(row);
+    if (!lines.length && sceneLabel.test(row))
+      intro.push(row.replace(sceneLabel, ""));
+    else if (turn) lines.push(turn);
+    else if (!lines.length) intro.push(row);
+    else
+      throw Error(
+        `Line ${index + 1} needs a speaker label. Use Name: dialogue for each spoken turn; put scene-setting text before the first speaker.`,
+      );
+  }
+  const scenario = intro.join(" ");
+  if (scenario.length > 500)
+    throw Error(
+      "Keep the scene introduction under 500 characters, followed by named speaker turns.",
+    );
   if (
     lines.length < 4 ||
     lines.length > 240 ||
-    lines.some((l) => !l[1] || l[1].length > 1200 || l[0].length > 40) ||
+    lines.some((l) => !l[1] || l[1].length > 1200) ||
     dialogue.length > 60000
   )
     throw Error(
-      "Use 4–240 turns, up to 1,200 characters per turn and 60,000 characters in total.",
+      "Use 4–240 named turns, up to 1,200 characters per turn and 60,000 characters in total. You may add a short scene introduction first.",
     );
   const count = new Set(lines.map((l) => l[0])).size;
   if (count < 2 || count > 6) throw Error("Use 2–6 distinct named speakers.");
-  return lines;
+  return { lines, scenario };
+}
+export function parseDialogue(dialogue: string) {
+  return parseConversation(dialogue).lines;
+}
+export function sceneFromDialogue(dialogue: string) {
+  try {
+    return parseConversation(dialogue).scenario;
+  } catch {
+    return "";
+  }
 }
 export function introduceSpeakers(
   lines: string[][],
@@ -93,11 +138,13 @@ export function formatDuration(seconds: number) {
 export function speakerNamesFromDialogue(dialogue: string): string[] {
   return [
     ...new Set(
-      dialogue.split(/\r?\n/).flatMap((line) => {
-        const colon = line.indexOf(":");
-        const name = colon > 0 ? line.slice(0, colon).trim() : "";
-        return name ? [name] : [];
-      }),
+      unwrapPaste(dialogue)
+        .split(/\r?\n/)
+        .flatMap((line) => {
+          if (sceneLabel.test(line.trim())) return [];
+          const turn = speakerTurn(line);
+          return turn ? [turn[0]] : [];
+        }),
     ),
   ];
 }
