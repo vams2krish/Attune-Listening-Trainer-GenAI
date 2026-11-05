@@ -1,4 +1,5 @@
 const copy: Record<string, Record<string, string>> = {
+  en: { "answered count": "answered" },
   te: {
     "Multiple choice": "బహుళ ఎంపిక",
     "Fill in the blank": "ఖాళీని పూరించండి",

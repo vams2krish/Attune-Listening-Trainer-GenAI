@@ -89,3 +89,19 @@ test('scene headers and markdown labels do not create extra speakers; malformed 
  assert.deepEqual(speakerNamesFromDialogue(text),['Alex','Jordan']);
  assert.throws(()=>parseConversation(text+'\nThis spoken turn has no label.'),/Line 6 needs a speaker label/);
 });
+
+
+test('structured compound answer arrays retain the client grading format', async () => {
+ const {normalizeModelQuestions}=await import('../src/lib/assessment-validation.ts');
+ const model=valid.map(q=>(q.kind==='matching'||q.kind==='ordering')?{...q,answer:q.answer.split('|')}:q);
+ const normalized=normalizeModelQuestions(model);
+ assert.equal(validateAssessment(normalized,lines).length,6);
+ assert.deepEqual(normalized.map(q=>q.answer),valid.map(q=>q.answer));
+});
+
+ test('numeric model option and item indexes preserve exact grading labels', async()=>{
+ const {normalizeModelQuestions}=await import('../src/lib/assessment-validation.ts');
+ const model=valid.map(q=>({...q,answer:q.kind==='mcq'?q.options.indexOf(q.answer):q.kind==='matching'?q.answer.split('|').map(a=>q.options.indexOf(a)):q.kind==='ordering'?q.answer.split('|').map(id=>q.items.findIndex(i=>i.id===id)):q.answer}));
+ assert.deepEqual(normalizeModelQuestions(model).map(q=>q.answer),valid.map(q=>q.answer));
+ assert.equal(validateAssessment(normalizeModelQuestions(model),lines).length,6);
+ });

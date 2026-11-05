@@ -68,7 +68,7 @@ This independent practice tool is inspired by listening-exam interaction. It is 
 | Framework | Next.js App Router conventions through Vinext, Vite 8 |
 | Runtime | Cloudflare Workers through Sites |
 | Dialogue generation | Server-side OpenRouter Chat Completions with JSON Schema output |
-| Default LLM | `google/gemini-3.8-flash`; configurable with `OPENROUTER_MODEL` |
+| Default LLM | `openai/gpt-4.1-nano`; only low-cost model overrides are allowed. Provider routing is price-sorted with hard ceilings of $0.15 input / $0.60 output per million tokens; there is no expensive model fallback. |
 | Speech | ElevenLabs Text to Dialogue, `eleven_v3` |
 | Playback | Browser audio object with selected playback rate and no exposed controls |
 | Persistence | Browser localStorage for saved dialogue and history |
@@ -148,7 +148,9 @@ docs/images/               Real product screenshots
 - The exact missed-train paste example is covered by a regression fixture: one scene introduction, eleven spoken turns, three names, embedded time/currency details, and an unspaced speaker colon.
 - Curated male/female voice defaults and filtered options were verified in the browser; tests cover correcting incompatible stored assignments and refusing a fallback to the wrong style. Exact saved voice choices were restored after reload and Library reopening. Immediate navigation and page-exit saving passed. Duplicate voices are rejected before any assessment-generation request.
 - Switching a localized question bank back to English invalidates that bank; legacy English-only banks remain compatible.
-- Real two-minute conversation/assessment generation passed. A live fifteen-minute generation check was not completed: initial output failed length validation and the available OpenRouter balance could not cover the request token allowance. Longer conversations now use connected generation sections with output allowances sized per section, but that provider path still needs a funded live check. A tiny provider request succeeded; full Hindi and 15-minute checks were rejected for insufficient credit to cover their maximum token allowance. Further paid checks are deferred until the owner adds credits.
+- Funded production check: the pasted train-platform story prepared successfully with Alex/Roger, Jordan/Charlie and Sam/George, eight questions across all six formats, and 2:04 of real ElevenLabs audio. Listening at normal speed, answering during playback, and submission produced 100% and 120 XP.
+- Funded fifteen-minute script generation produced 40 turns and about 1,931 words, estimated at 13:36, with 24 questions across all six formats. Full fifteen-minute audio has not been rendered in this check.
+- The cheap default model passed a live Hindi assessment check: eight questions, all six types, Hindi-only choices, and localized true/false labels. Question outputs use numeric option/item indexes that are converted into exact grading labels; invalid results receive at most one repair using the same low-cost policy.
 
 ## Limits and privacy
 
@@ -168,3 +170,5 @@ docs/images/               Real product screenshots
 - [ElevenLabs voice discovery](https://elevenlabs.io/docs/api-reference/voices/search)
 
 Third-party starter/vendor licenses are retained alongside their files.
+
+- The cheap default also passed a live 24-question assessment against the long transcript, including all six question types. Automated regression suite: 21 passing tests.

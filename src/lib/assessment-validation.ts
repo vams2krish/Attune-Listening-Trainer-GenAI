@@ -151,3 +151,19 @@ export function orderQuestions(questions: Question[]): Question[] {
         Math.min(...(b.evidence?.length ? b.evidence : [0])),
   );
 }
+
+/** Convert model indexes into the exact labels/ids used by existing saved tests. */
+export function normalizeModelQuestions(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((q) => {
+    if (q?.kind === "mcq" && Number.isInteger(q.answer) && Array.isArray(q.options) && typeof q.options[q.answer] === "string")
+      return { ...q, answer: q.options[q.answer] };
+    if (q?.kind === "matching" && Array.isArray(q.answer) && Array.isArray(q.options) && q.answer.every((v: unknown) => Number.isInteger(v) && typeof q.options[Number(v)] === "string"))
+      return { ...q, answer: q.answer.map((v: number) => q.options[v]).join("|") };
+    if (q?.kind === "ordering" && Array.isArray(q.answer) && Array.isArray(q.items) && q.answer.every((v: unknown) => Number.isInteger(v) && typeof q.items[Number(v)]?.id === "string"))
+      return { ...q, answer: q.answer.map((v: number) => q.items[v].id).join("|") };
+    if (q && (q.kind === "matching" || q.kind === "ordering") && Array.isArray(q.answer) && q.answer.every((v: unknown) => typeof v === "string"))
+      return { ...q, answer: q.answer.join("|") };
+    return q;
+  });
+}
