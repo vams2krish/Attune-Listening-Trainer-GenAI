@@ -30,7 +30,7 @@ import {
   isAssessmentCurrent,
   type Question,
 } from "./lib/questions";
-import { ListeningDoodle, ListeningTrail } from "./components/listening-doodle";
+import { ListeningDoodle } from "./components/listening-doodle";
 import { AnswerSheet } from "./components/answer-sheet";
 import {
   ResultCelebration,
@@ -52,6 +52,14 @@ import {
   type SessionMinutes,
 } from "./lib/session-content";
 import { audioDuration, playOnce, type AudioPart } from "./lib/audio";
+import {
+  SessionJourney,
+  RewardInfo,
+  NeuroMatrix,
+} from "./components/session-flow";
+import { practiceXp, practiceStreak } from "./lib/practice-metrics";
+import { speechCacheKey, readSpeech, writeSpeech } from "./lib/speech-cache";
+
 type Session = {
   title: string;
   lines: string[][];
@@ -77,17 +85,7 @@ type Entry = {
   lang: Lang;
 };
 const langs = { en: "English", te: "Telugu", hi: "Hindi" };
-function getStreak(entries: Entry[]) {
-  const days = new Set(entries.map((h) => new Date(h.date).toDateString()));
-  const d = new Date();
-  if (!days.has(d.toDateString())) d.setDate(d.getDate() - 1);
-  let n = 0;
-  while (days.has(d.toDateString())) {
-    n++;
-    d.setDate(d.getDate() - 1);
-  }
-  return n;
-}
+const getStreak = practiceStreak;
 const day = (d = new Date()) =>
   `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 function loadHistory(): Entry[] {
@@ -227,6 +225,49 @@ export default function App() {
     questions: Question[];
   } | null>(null);
   const [prepareStatus, setPrepareStatus] = useState("");
+  const [prepareProgress, setPrepareProgress] = useState(0);
+  const [countdownSeconds, setCountdownSeconds] = useState(5);
+  const [countdownLeft, setCountdownLeft] = useState<number | null>(null);
+  const [questionView, setQuestionView] = useState<"cards" | "list">("cards");
+  const [cacheNote, setCacheNote] = useState("");
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      for (const part of audioCache.current.values())
+        URL.revokeObjectURL(part.url);
+    };
+  }, []);
+  useEffect(() => {
+    try {
+      const p = JSON.parse(
+        localStorage.getItem("attune-session-preferences") || "{}",
+      );
+      if ([0, 5, 10].includes(p.countdown)) setCountdownSeconds(p.countdown);
+      if (p.questionView === "list") setQuestionView("list");
+    } catch {}
+  }, []);
+  function setSessionPreference(countdown: number, mode: "cards" | "list") {
+    setCountdownSeconds(countdown);
+    setQuestionView(mode);
+    try {
+      localStorage.setItem(
+        "attune-session-preferences",
+        JSON.stringify({ countdown, questionView: mode }),
+      );
+    } catch {}
+  }
+  async function runCountdown() {
+    if (!countdownSeconds) return;
+    setPhase("countdown");
+    for (let n = countdownSeconds; n > 0; n--) {
+      if (!mounted.current) throw Error("Session closed.");
+      setCountdownLeft(n);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    setCountdownLeft(null);
+  }
   const audioCache = useRef(new Map<string, AudioPart>());
   const dialogueKey = (lines: string[][]) =>
     lines.map(([n, t]) => `${n}: ${t}`).join("\n");
@@ -294,9 +335,6 @@ export default function App() {
     return () => controller.abort();
   }, [speechProvider]);
   useEffect(() => {
-    for (const part of audioCache.current.values())
-      URL.revokeObjectURL(part.url);
-    audioCache.current.clear();
     setPrepared(null);
   }, [
     custom,
@@ -417,6 +455,15 @@ export default function App() {
     setError("");
     try {
       let s = prepare();
+      const launching = phase === "ready";
+      setSession(s);
+      if (!launching) {
+        setPhase("preparing");
+        setPrepareProgress(8);
+        setPrepareStatus("Checking scenario and speaker voices…");
+        setCacheNote("");
+        window.scrollTo(0, 0);
+      }
       if (speechProvider === "elevenlabs") {
         const missing = s.speakers.filter((name) => !preferredStyles[name]);
         if (missing.length) {
@@ -439,7 +486,10 @@ export default function App() {
         if (ids.some((id) => !id) || new Set(ids).size !== s.speakers.length)
           throw Error("Choose a different ElevenLabs voice for every speaker.");
       }
+      setPrepareProgress(18);
       s = await ensureAssessment(s);
+      setPrepareProgress(38);
+      setSession(s);
       saveDraft({
         title: s.title,
         dialogue: source === "custom" ? custom : dialogueKey(s.lines),
@@ -455,6 +505,12 @@ export default function App() {
       });
       s = { ...s, lines: introduceSpeakers(s.lines, s.lang, s.scenario) };
       if (speechProvider === "browser" && lang === "en") {
+        if (!launching) {
+          setPrepareProgress(100);
+          setPhase("ready");
+          return;
+        }
+        await runCountdown();
         await startBrowser(s);
         return;
       }
@@ -467,21 +523,38 @@ export default function App() {
           })),
         );
         const parts: AudioPart[] = [];
+        let reusedParts = 0;
+        let unsavedParts = 0;
         for (let i = 0; i < chunks.length; i++) {
-          setPrepareStatus(`Preparing audio ${i + 1} of ${chunks.length}…`);
+          setPrepareProgress(38 + Math.round((i / chunks.length) * 57));
+          setPrepareStatus(
+            `Checking saved audio · part ${i + 1} of ${chunks.length}…`,
+          );
           const key = JSON.stringify({ lang: s.lang, inputs: chunks[i] });
           let part = audioCache.current.get(key);
+          if (part) reusedParts++;
           if (!part) {
-            const r = await fetch("/api/speech", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: key,
-            });
-            if (!r.ok) {
-              const data = (await r.json()) as { error?: string };
-              throw Error(data.error || "Could not prepare an audio part.");
+            const cacheKey = await speechCacheKey(key);
+            let blob = await readSpeech(cacheKey);
+            const reused = !!blob;
+            if (!blob) {
+              setPrepareStatus(
+                `Creating audio · part ${i + 1} of ${chunks.length}…`,
+              );
+              const r = await fetch("/api/speech", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: key,
+              });
+              if (!r.ok) {
+                const data = (await r.json()) as { error?: string };
+                throw Error(data.error || "Could not prepare an audio part.");
+              }
+              blob = await r.blob();
+              const saved = await writeSpeech(cacheKey, blob);
+              if (!saved) unsavedParts++;
             }
-            const blob = await r.blob();
+            if (reused) reusedParts++;
             const url = URL.createObjectURL(blob);
             try {
               part = { url, duration: await audioDuration(url) };
@@ -493,11 +566,22 @@ export default function App() {
           }
           parts.push(part);
         }
+        setCacheNote(
+          `${reusedParts}/${parts.length} saved audio parts reused on this device. ${reusedParts === parts.length ? "No new speech request." : "Only missing audio parts were generated."}${unsavedParts ? " Browser storage could not retain new audio for future visits." : ""}`,
+        );
         setPrepared({
           parts,
           duration: parts.reduce((n, p) => n + p.duration, 0),
           fingerprint,
         });
+        setPrepareProgress(100);
+        setPhase("ready");
+        return;
+      }
+      if (!launching) {
+        setPhase("ready");
+        setPrepareProgress(100);
+        setCacheNote("Prepared audio reused. No new speech request.");
         return;
       }
       running.current = true;
@@ -505,6 +589,7 @@ export default function App() {
       s.durationSeconds = prepared.duration / s.speed;
       setSession(s);
       setAnswers(Array(s.questions.length).fill(""));
+      await runCountdown();
       setPhase("listening");
       await playOnce(prepared.parts, s.speed, (a) => {
         audioRef.current = a;
@@ -521,10 +606,6 @@ export default function App() {
       setAudioBusy(false);
       setPrepareStatus("");
       if (started) {
-        for (const part of audioCache.current.values())
-          URL.revokeObjectURL(part.url);
-        audioCache.current.clear();
-        setPrepared(null);
         audioRef.current = null;
       }
     }
@@ -622,10 +703,12 @@ export default function App() {
     });
   }, [speakerKey, deviceVoiceKey]);
   function go(v: string) {
-    if (phase !== "setup" || audioBusy) return;
+    if (!["setup", "results", "ready"].includes(phase) || audioBusy) return;
+    setPhase("setup");
     if (source === "custom" && custom.trim()) saveWritten();
     else setError("");
     setView(v);
+    window.scrollTo(0, 0);
   }
   function prepare(): Session {
     const parsed = source === "custom" ? parseConversation(custom) : null;
@@ -749,7 +832,7 @@ export default function App() {
       gradeAnswer(q, answers[i]),
     ).length;
     const score = Math.round((correct / session.questions.length) * 100),
-      xp = Math.round(correct * 15 * (0.75 + session.speed * 0.25));
+      xp = practiceXp(correct, session.speed);
     if (soundOn) playResultSound(score);
     setSession({ ...session, answers, score, xp });
     const entry = {
@@ -830,7 +913,9 @@ export default function App() {
             <button
               key={n.id}
               aria-label={n.label}
-              disabled={phase !== "setup" || audioBusy}
+              disabled={
+                !["setup", "results", "ready"].includes(phase) || audioBusy
+              }
               onClick={() => go(n.id)}
               aria-current={view === n.id ? "page" : undefined}
               className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-[13px] transition-colors disabled:opacity-40 ${view === n.id ? "bg-zinc-100 text-zinc-950 font-medium" : "text-zinc-500 hover:bg-zinc-50"}`}
@@ -873,6 +958,113 @@ export default function App() {
           </span>
         </header>
         <div className="max-w-[1120px] mx-auto px-6 lg:px-12 pt-10 pb-16">
+          {view === "practice" && <SessionJourney phase={phase} />}
+          {view === "progress" && <RewardInfo />}
+          {["preparing", "ready", "countdown"].includes(phase) && session && (
+            <div className="stage-enter">
+              <Heading
+                title={
+                  phase === "preparing"
+                    ? "Getting your session ready."
+                    : "Meet the conversation."
+                }
+              >
+                A quick brief before you tune in.
+              </Heading>
+              <Card className="p-6 sm:p-8 mb-6">
+                <div className="flex justify-between gap-4 mb-5">
+                  <span className="welcome-eyebrow">02 / Tune in</span>
+                  <span className="text-xs">
+                    {langs[session.lang]} · {speed.toFixed(1)}×
+                  </span>
+                </div>
+                <h2 className="text-xl font-semibold mb-3">{session.title}</h2>
+                <p className="text-sm text-muted-foreground leading-7">
+                  {session.scenario}
+                </p>
+                <div className="grid sm:grid-cols-3 gap-3 mt-6">
+                  {session.speakers.map((name, i) => (
+                    <div className="cast-card" key={name}>
+                      <span className="cast-avatar">{name.slice(0, 1)}</span>
+                      <strong className="text-sm block mt-3">{name}</strong>
+                      <p className="text-xs mt-2 text-muted-foreground">
+                        {session.cast?.find((c) => c.name === name)?.role ||
+                          `Conversation participant ${i + 1}`}
+                      </p>
+                      <p className="text-[11px] mt-3">
+                        Voice:{" "}
+                        {speechProvider === "elevenlabs"
+                          ? cloudVoices.find(
+                              (v) => v.id === cloudVoiceAssignments[name],
+                            )?.name || "Assigned voice"
+                          : "Device voice"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                {phase === "preparing" ? (
+                  <div className="mt-7" role="status" aria-live="polite">
+                    <p className="text-sm mb-3">
+                      {prepareStatus || "Preparing…"}
+                    </p>
+                    <div
+                      className="preparation-track"
+                      role="progressbar"
+                      aria-label="Session preparation"
+                      aria-valuenow={prepareProgress}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <span style={{ width: `${prepareProgress}%` }} />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-3">
+                      Scenario checked → test questions → saved audio check →
+                      ready. Progress follows completed steps; audio parts can
+                      take a little longer.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-7 border-t pt-5">
+                    <p className="text-xs mb-3">
+                      {session.questions.length} questions · 6 formats ·{" "}
+                      {prepared
+                        ? formatDuration(prepared.duration / speed)
+                        : "Device speech"}{" "}
+                      · one listen
+                    </p>
+                    <p className="text-xs text-muted-foreground mb-5">
+                      {cacheNote ||
+                        "Your conversation is saved in the Library."}
+                    </p>
+                    <div className="flex gap-3 flex-wrap">
+                      <Button onClick={start} disabled={audioBusy}>
+                        Start listening <Headphones />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={audioBusy}
+                        onClick={() => {
+                          setPhase("setup");
+                          setSession(null);
+                        }}
+                      >
+                        Edit session
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+          {phase === "countdown" && (
+            <div className="countdown-overlay" role="status" aria-live="polite">
+              <p>Get comfortable. Listening starts in</p>
+              <strong key={countdownLeft} className="countdown-number">
+                {countdownLeft}
+              </strong>
+              <span>Headphones on · stay with the conversation</span>
+            </div>
+          )}
           {phase === "setup" && view === "practice" && (
             <>
               <div className="workspace-welcome">
@@ -891,7 +1083,6 @@ export default function App() {
                 <ListeningDoodle />
               </div>
               <Card className="p-6 sm:p-8 setup-surface">
-                <ListeningTrail />
                 <fieldset disabled={audioBusy} className="min-w-0">
                   <Section number="01" title="Conversation">
                     <div className="inline-flex flex-wrap rounded-lg bg-zinc-100 p-1 mb-5 gap-1">
@@ -1350,6 +1541,45 @@ export default function App() {
                       <AudioLines className="size-4" />
                       Your session
                     </div>
+                    <div className="grid sm:grid-cols-2 gap-4 mb-5">
+                      <div>
+                        <Label htmlFor="countdown-setting">
+                          Start countdown
+                        </Label>
+                        <select
+                          id="countdown-setting"
+                          value={countdownSeconds}
+                          onChange={(e) =>
+                            setSessionPreference(
+                              Number(e.target.value),
+                              questionView,
+                            )
+                          }
+                        >
+                          <option value={0}>No countdown</option>
+                          <option value={5}>5 seconds</option>
+                          <option value={10}>10 seconds</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label htmlFor="question-view-setting">
+                          Answer sheet view
+                        </Label>
+                        <select
+                          id="question-view-setting"
+                          value={questionView}
+                          onChange={(e) =>
+                            setSessionPreference(
+                              countdownSeconds,
+                              e.target.value as "cards" | "list",
+                            )
+                          }
+                        >
+                          <option value="cards">One question at a time</option>
+                          <option value="list">Full question list</option>
+                        </select>
+                      </div>
+                    </div>
                     <dl className="text-xs grid grid-cols-2 sm:grid-cols-4 gap-4">
                       {[
                         ["Language", langs[lang]],
@@ -1376,9 +1606,7 @@ export default function App() {
                       >
                         {audioBusy
                           ? prepareStatus || "Preparing session…"
-                          : speechProvider === "elevenlabs" && !prepared
-                            ? "Prepare session"
-                            : "Start listening"}
+                          : "Prepare session"}
                         <ArrowRight />
                       </Button>
                       {prepared && (
@@ -1478,6 +1706,10 @@ export default function App() {
                     : "The recording has ended. Finish your answers, then submit the full set."}
                 </Heading>
                 <AnswerSheet
+                  viewMode={questionView}
+                  onViewModeChange={(mode) =>
+                    setSessionPreference(countdownSeconds, mode)
+                  }
                   questions={session.questions}
                   answers={answers}
                   onChange={(i, a) =>
@@ -1495,6 +1727,22 @@ export default function App() {
               <Heading title="A little more attuned.">
                 Review what you caught, and what to listen for next time.
               </Heading>
+              <div className="school-grade">
+                <span>Correct answers / Total questions</span>
+                <strong>
+                  {
+                    session.questions.filter((q, i) =>
+                      gradeAnswer(q, session.answers![i]),
+                    ).length
+                  }{" "}
+                  <small>/ {session.questions.length}</small>
+                </strong>
+              </div>
+              <RewardInfo />
+              <NeuroMatrix
+                questions={session.questions}
+                answers={session.answers!}
+              />
               <ResultCelebration score={session.score!} effects={effectsOn} />
               <div className="grid grid-cols-3 gap-3 mb-6">
                 {[
@@ -1559,6 +1807,20 @@ export default function App() {
                     ))}
                   </div>
                 </Card>
+              </div>
+              <div className="results-actions">
+                <Button onClick={reset}>
+                  New session <Plus />
+                </Button>
+                <Button variant="outline" onClick={() => go("practice")}>
+                  Practice
+                </Button>
+                <Button variant="outline" onClick={() => go("progress")}>
+                  Progress
+                </Button>
+                <Button variant="outline" onClick={() => go("library")}>
+                  Library
+                </Button>
               </div>
             </>
           )}

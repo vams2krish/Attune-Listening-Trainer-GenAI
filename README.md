@@ -172,3 +172,13 @@ docs/images/               Real product screenshots
 Third-party starter/vendor licenses are retained alongside their files.
 
 - The cheap default also passed a live 24-question assessment against the long transcript, including all six question types. Automated regression suite: 21 passing tests.
+
+## Guided session flow and feedback
+
+- The package-tracking journey follows **Set the scene → Tune in → Connect the dots** across separate setup, preparation, cast brief, countdown, answering, and results screens. Preparation progress reflects completed work rather than a fake elapsed timer.
+- Choose a 5-second or 10-second start countdown, or turn it off. A large pulsing countdown respects reduced-motion preferences. Layout preferences persist locally.
+- Switch between one-question cards and a complete chronological answer list during the test without losing answers. Results display **correct / total**, individual corrections, a bottom New session action, and working Practice / Progress / Library navigation.
+- Expand **How XP & streaks work** in Results or Progress for the exact XP formula, local-day streak rules, repeat-test behavior, and browser-storage limitations.
+- The **Neuro-Auditory Matrix** groups actual scored questions into detail focus, meaning/reasoning, association, and sequence memory. This is task feedback; it does not measure clinical attention, sensory integration, or spatial hearing.
+- Speech parts persist in IndexedDB on the current browser/device, keyed by the exact spoken text (including introductions/scenario), language, voice assignments, model and format. Reopening identical content reuses audio, including after reload; speed and question-layout changes do not regenerate it. Cache storage is bounded to 50 MiB / 80 parts and evicts oldest parts. Changed spoken content or voices, cleared browser storage, another device, or evicted audio can require generation. This is a device cache, not account-wide cloud storage.
+- This update was checked with fixture-only provider routes and synthetic silent WAV audio. No paid audio or model generation was used. Verified staged preparation, countdown, both answer layouts, retained answers, grading, result navigation, and cross-visit cache reuse (one mock speech request across two preparations).

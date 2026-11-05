@@ -12,6 +12,8 @@ export function AnswerSheet({
   onSubmit,
   listening,
   lang = "en",
+  viewMode = "cards",
+  onViewModeChange,
 }: {
   questions: Question[];
   answers: string[];
@@ -19,6 +21,8 @@ export function AnswerSheet({
   onSubmit: () => void;
   listening: boolean;
   lang?: string;
+  viewMode?: "cards" | "list";
+  onViewModeChange?: (mode: "cards" | "list") => void;
 }) {
   const t = assessmentText(lang);
   const [active, setActive] = useState(0);
@@ -71,6 +75,28 @@ export function AnswerSheet({
           {completed}/{questions.length}
         </span>
       </div>
+      <div
+        className="flex gap-2 mb-5"
+        role="group"
+        aria-label="Answer sheet layout"
+      >
+        <Button
+          type="button"
+          variant={viewMode === "cards" ? "default" : "outline"}
+          aria-pressed={viewMode === "cards"}
+          onClick={() => onViewModeChange?.("cards")}
+        >
+          Card view
+        </Button>
+        <Button
+          type="button"
+          variant={viewMode === "list" ? "default" : "outline"}
+          aria-pressed={viewMode === "list"}
+          onClick={() => onViewModeChange?.("list")}
+        >
+          Full list
+        </Button>
+      </div>
       <p className="text-xs text-muted-foreground mb-4">
         {t(
           "Questions follow the conversation in order. Move to the next question as you hear each detail.",
@@ -86,7 +112,13 @@ export function AnswerSheet({
             key={i}
             aria-label={`${t("Question")} ${i + 1}${isAnswered(q, answers[i]) ? ", " + t("answered") : ""}`}
             aria-current={active === i ? "step" : undefined}
-            onClick={() => setActive(i)}
+            onClick={() => {
+              setActive(i);
+              if (viewMode === "list")
+                document
+                  .getElementById(`question-card-${i}`)
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
             className={`question-step size-9 rounded-md border text-xs flex items-center justify-center gap-1 ${active === i ? "bg-zinc-900 text-white border-zinc-900" : "border-border bg-white"}`}
           >
             {i + 1}
@@ -103,8 +135,12 @@ export function AnswerSheet({
       >
         {questions.map(
           (q, i) =>
-            i === active && (
-              <Card key={i} className="p-6 question-enter">
+            (viewMode === "list" || i === active) && (
+              <Card
+                id={`question-card-${i}`}
+                key={i}
+                className="p-6 question-enter"
+              >
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-3">
                   {i + 1} / {questions.length} <span className="mx-2">·</span>
                   {q.kind ? t(typeLabels[q.kind]) : q.category}
@@ -192,7 +228,9 @@ export function AnswerSheet({
               </Card>
             ),
         )}
-        <div className="flex items-center justify-between pt-3 gap-3 flex-wrap">
+        <div
+          className={`items-center justify-between pt-3 gap-3 flex-wrap ${viewMode === "list" ? "hidden" : "flex"}`}
+        >
           <Button
             type="button"
             variant="outline"
@@ -216,7 +254,7 @@ export function AnswerSheet({
           <span className="text-xs text-muted-foreground">
             {completed}/{questions.length} {t("answered count")}
           </span>
-          {active === questions.length - 1 && (
+          {(viewMode === "list" || active === questions.length - 1) && (
             <Button
               type="submit"
               disabled={listening || completed < questions.length}
